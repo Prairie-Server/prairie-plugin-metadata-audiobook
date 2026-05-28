@@ -221,11 +221,8 @@ func providerIDsFromMatch(match metadata.Match) map[string]string {
 	providerID := primaryProviderID(match)
 	provider := strings.TrimSpace(match.Provider)
 
-	if provider != "" {
-		ids["provider"] = provider
-		if providerID != "" {
-			ids[provider] = providerID
-		}
+	if provider != "" && providerID != "" {
+		ids[provider] = providerID
 	}
 	if providerID != "" {
 		ids[capabilityID] = providerID

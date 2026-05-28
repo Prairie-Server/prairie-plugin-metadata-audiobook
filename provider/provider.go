@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 )
 
 const (
+	capabilityProviderID = "audiobook-metadata"
+
 	// providerTimeout is the per-provider deadline for Search/Fetch calls.
 	providerTimeout = 10 * time.Second
 
@@ -109,45 +112,46 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	tctx, cancel := context.WithTimeout(ctx, providerTimeout)
 	defer cancel()
 
-	// Dispatch by provider hint.
-	providerHint := q.ProviderIDs["provider"]
+	// Dispatch by explicit legacy hint or by the real provider-specific IDs
+	// stored in ProviderIDs.
+	providerHint := providerHintFromIDs(q.ProviderIDs)
 
 	switch providerHint {
 	case "audnexus":
-		asin := q.ProviderIDs["asin"]
-		if asin == "" {
-			asin = q.ProviderIDs["audnexus"]
-		}
+		asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", capabilityProviderID)
 		if asin != "" {
 			return p.Audnexus.Fetch(tctx, asin)
 		}
 	case "audimeta":
-		asin := q.ProviderIDs["asin"]
-		if asin == "" {
-			asin = q.ProviderIDs["audimeta"]
-		}
+		asin := firstProviderID(q.ProviderIDs, "asin", "audimeta", capabilityProviderID)
 		if asin != "" {
 			return p.AudiMeta.Fetch(tctx, asin)
 		}
 	case "itunes":
-		return p.ITunes.Fetch(tctx, q.ProviderIDs["itunes"])
-	case "audible":
-		asin := q.ProviderIDs["asin"]
-		if asin == "" {
-			asin = q.ProviderIDs["audible"]
+		if id := firstProviderID(q.ProviderIDs, "itunes", capabilityProviderID); id != "" {
+			return p.ITunes.Fetch(tctx, id)
 		}
+	case "audible":
+		asin := firstProviderID(q.ProviderIDs, "asin", "audible", capabilityProviderID)
 		if asin != "" {
 			return p.Audible.Fetch(tctx, asin)
 		}
 	case "storytel":
-		id := q.ProviderIDs["storytel"]
-		if id != "" {
+		if id := firstProviderID(q.ProviderIDs, "storytel", capabilityProviderID); id != "" {
 			return p.Storytel.Fetch(tctx, id)
 		}
 	}
 
-	// Fallback: if an ASIN is present, try Audnexus then AudiMeta.
-	if asin := q.ProviderIDs["asin"]; asin != "" {
+	// Fallback: if an ASIN is present, try Audnexus then AudiMeta. Only
+	// treat the capability-level ID as an ASIN when it has ASIN shape, since
+	// non-ASIN providers such as iTunes also use that field as a fallback ID.
+	asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", "audimeta", "audible")
+	if asin == "" {
+		if id := firstProviderID(q.ProviderIDs, capabilityProviderID); isLikelyASIN(id) {
+			asin = id
+		}
+	}
+	if asin != "" {
 		if m, err := p.Audnexus.Fetch(tctx, asin); m != nil || err != nil {
 			return m, err
 		}
@@ -155,4 +159,38 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	}
 
 	return nil, nil
+}
+
+func providerHintFromIDs(ids map[string]string) string {
+	if hint := strings.TrimSpace(ids["provider"]); hint != "" {
+		return hint
+	}
+	for _, provider := range []string{"audnexus", "audimeta", "itunes", "audible", "storytel"} {
+		if strings.TrimSpace(ids[provider]) != "" {
+			return provider
+		}
+	}
+	return ""
+}
+
+func isLikelyASIN(value string) bool {
+	if len(value) != 10 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func firstProviderID(ids map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(ids[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }

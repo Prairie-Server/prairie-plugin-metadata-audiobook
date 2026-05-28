@@ -63,7 +63,10 @@ func TestProviderSearchResultFromMatchMapsProviderIDs(t *testing.T) {
 	}
 
 	ids := result.GetProviderIds().AsMap()
-	if ids["provider"] != "audible" || ids["audible"] != "B012345678" {
+	if _, ok := ids["provider"]; ok {
+		t.Fatalf("provider ids should not include synthetic provider hint: %#v", ids)
+	}
+	if ids["audible"] != "B012345678" {
 		t.Fatalf("provider ids = %#v", ids)
 	}
 	if ids[capabilityID] != "B012345678" || ids["asin"] != "B012345678" {

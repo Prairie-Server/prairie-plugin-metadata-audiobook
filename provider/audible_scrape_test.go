@@ -2,13 +2,22 @@ package provider
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
 
 func TestAudibleParseProductPage(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/audible_product.html")
@@ -68,6 +77,35 @@ func TestAudibleParseProductPage(t *testing.T) {
 	}
 	if m.SeriesPosition != "1" {
 		t.Errorf("SeriesPosition = %q, want 1", m.SeriesPosition)
+	}
+}
+
+func TestAudibleParseProductPageNilDocument(t *testing.T) {
+	scraper := NewAudibleScraper()
+	if match := scraper.parseProductPage(nil, "B002V0QHBU"); match != nil {
+		t.Fatalf("parseProductPage(nil) = %#v, want nil", match)
+	}
+}
+
+func TestAudibleFetchNotFoundReturnsNil(t *testing.T) {
+	scraper := NewAudibleScraper()
+	scraper.httpClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	match, err := scraper.Fetch(context.Background(), "B002V0QHBU")
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if match != nil {
+		t.Fatalf("Fetch() = %#v, want nil", match)
 	}
 }
 

@@ -128,6 +128,9 @@ func (s *AudibleScraper) Fetch(ctx context.Context, asin string) (*metadata.Matc
 	if err != nil {
 		return nil, err
 	}
+	if doc == nil {
+		return nil, nil
+	}
 
 	return s.parseProductPage(doc, asin), nil
 }
@@ -184,15 +187,15 @@ func (s *AudibleScraper) searchASINs(ctx context.Context, q metadata.SearchQuery
 
 // jsonLdNode is a minimally-typed JSON-LD node for Audible pages.
 type jsonLdNode struct {
-	Type            string      `json:"@type"`
-	Name            string      `json:"name"`
-	Description     string      `json:"description"`
-	Image           string      `json:"image"`
-	InLanguage      string      `json:"inLanguage"`
-	Publisher       string      `json:"publisher"`
-	DatePublished   string      `json:"datePublished"`
-	Duration        string      `json:"duration"`
-	Abridged        string      `json:"abridged"`
+	Type            string          `json:"@type"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Image           string          `json:"image"`
+	InLanguage      string          `json:"inLanguage"`
+	Publisher       string          `json:"publisher"`
+	DatePublished   string          `json:"datePublished"`
+	Duration        string          `json:"duration"`
+	Abridged        string          `json:"abridged"`
 	Author          json.RawMessage `json:"author"`
 	ReadBy          json.RawMessage `json:"readBy"`
 	AggregateRating *struct {
@@ -212,6 +215,10 @@ type jsonLdBreadcrumb struct {
 
 // parseProductPage extracts metadata from an Audible product page document.
 func (s *AudibleScraper) parseProductPage(doc *goquery.Document, asin string) *metadata.Match {
+	if doc == nil {
+		return nil
+	}
+
 	var audiobookNode *jsonLdNode
 	var breadcrumb *jsonLdBreadcrumb
 
