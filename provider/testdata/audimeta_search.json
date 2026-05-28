@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "asin": "B002V0QHBU",
+      "title": "The Hitchhiker's Guide to the Galaxy",
+      "authors": [{"name": "Douglas Adams"}],
+      "narrators": [{"name": "Stephen Fry"}],
+      "image": "https://m.media-amazon.com/images/I/51R6H0NG1TL._SL500_.jpg",
+      "releaseDate": "2005-09-27",
+      "runtimeLengthMin": 193,
+      "series": {"name": "Hitchhiker's Guide to the Galaxy", "position": "1"}
+    }
+  ]
+}

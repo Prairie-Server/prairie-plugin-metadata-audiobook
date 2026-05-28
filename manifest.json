@@ -1,0 +1,34 @@
+{
+  "plugin_id": "silo.audiobook-metadata",
+  "version": "0.1.0",
+  "checksum": "__CHECKSUM__",
+  "silo_api_version": "v1",
+  "supported_platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64"
+    }
+  ],
+  "capabilities": [
+    {
+      "type": "metadata_provider.v1",
+      "id": "audiobook-metadata",
+      "display_name": "Audiobook Metadata",
+      "description": "Metadata provider for audiobook items. Wraps Audnexus, AudiMeta, iTunes, Audible, and Storytel.",
+      "metadata": {
+        "default_priority": {
+          "audiobook": 2
+        }
+      }
+    }
+  ],
+  "global_config_schema": []
+}

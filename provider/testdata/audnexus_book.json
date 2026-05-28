@@ -1,0 +1,18 @@
+{
+  "asin": "B002V0QHBU",
+  "title": "The Hitchhiker's Guide to the Galaxy",
+  "subtitle": "Hitchhiker's Guide, Book 1",
+  "authors": [{"asin": "B000AQ1HEO", "name": "Douglas Adams"}],
+  "narrators": [{"name": "Stephen Fry"}],
+  "publisher": "Macmillan Audio",
+  "releaseDate": "2005-09-27",
+  "runtimeLengthMin": 193,
+  "description": "<p>Seconds before the Earth is demolished for a hyperspace bypass, Arthur Dent is saved by Ford Prefect.</p>",
+  "image": "https://m.media-amazon.com/images/I/51R6H0NG1TL._SL500_.jpg",
+  "genres": [
+    {"asin": "18580606011", "name": "Science Fiction", "type": "genre"},
+    {"asin": "18580606011", "name": "British", "type": "tag"}
+  ],
+  "series": [{"asin": "B0182NW6DC", "name": "Hitchhiker's Guide to the Galaxy", "position": "1"}],
+  "language": "english"
+}

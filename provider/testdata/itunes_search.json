@@ -1,0 +1,20 @@
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "wrapperType": "audiobook",
+      "artistType": "Artist",
+      "collectionType": "Audiobook",
+      "collectionId": 1440742,
+      "artistId": 4936,
+      "collectionName": "The Hitchhiker's Guide to the Galaxy",
+      "artistName": "Douglas Adams",
+      "description": "Seconds before the Earth is demolished for a hyperspace bypass.",
+      "releaseDate": "2005-09-27T07:00:00Z",
+      "primaryGenreName": "Science Fiction",
+      "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music/abc/100x100bb.jpg",
+      "artworkUrl600": "https://is1-ssl.mzstatic.com/image/thumb/Music/abc/600x600bb.jpg",
+      "trackTimeMillis": 11580000
+    }
+  ]
+}
