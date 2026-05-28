@@ -7,18 +7,21 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
 	"github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/runtime"
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version string
+
+const capabilityID = "audiobook-metadata"
 
 type runtimeServer struct {
 	pluginv1.UnimplementedRuntimeServer
@@ -53,7 +56,7 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		return nil, err
 	}
 
-	_, err = p.Search(ctx, metadata.SearchQuery{
+	results, err := p.Search(ctx, metadata.SearchQuery{
 		Title:       req.GetQuery(),
 		Year:        int(req.GetYear()),
 		ContentType: req.GetItemType(),
@@ -64,10 +67,19 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		return nil, err
 	}
 
-	// TODO(audiobook-metadata): map []metadata.Match to ProviderSearchResult records.
-	return &pluginv1.SearchMetadataResponse{
-		Results: []*pluginv1.ProviderSearchResult{},
-	}, nil
+	response := &pluginv1.SearchMetadataResponse{
+		Results: make([]*pluginv1.ProviderSearchResult, 0, len(results)),
+	}
+	for _, result := range results {
+		searchResult, err := providerSearchResultFromMatch(result, req.GetItemType())
+		if err != nil {
+			return nil, err
+		}
+		if searchResult != nil {
+			response.Results = append(response.Results, searchResult)
+		}
+	}
+	return response, nil
 }
 
 func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetadataRequest) (*pluginv1.GetMetadataResponse, error) {
@@ -77,7 +89,7 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 	}
 
 	result, err := p.Fetch(ctx, metadata.SearchQuery{
-		ProviderIDs: providerIDsFromProto(req.GetProviderIds(), "audiobook-metadata", req.GetProviderId()),
+		ProviderIDs: providerIDsFromProto(req.GetProviderIds(), capabilityID, req.GetProviderId()),
 		ContentType: req.GetItemType(),
 		Language:    req.GetLanguage(),
 	})
@@ -85,8 +97,11 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 		return nil, err
 	}
 
-	// TODO(audiobook-metadata): map metadata.Match to MetadataItem.
-	return &pluginv1.GetMetadataResponse{}, nil
+	item, err := metadataItemFromMatch(*result, req.GetItemType())
+	if err != nil {
+		return nil, err
+	}
+	return &pluginv1.GetMetadataResponse{Item: item}, nil
 }
 
 func main() {
@@ -152,4 +167,169 @@ func providerIDsFromProto(value *structpb.Struct, capabilityID string, fallbackI
 		result[capabilityID] = fallbackID
 	}
 	return result
+}
+
+func providerSearchResultFromMatch(match metadata.Match, itemType string) (*pluginv1.ProviderSearchResult, error) {
+	providerID := primaryProviderID(match)
+	if providerID == "" {
+		return nil, nil
+	}
+
+	providerIDs, err := stringStruct(providerIDsFromMatch(match))
+	if err != nil {
+		return nil, err
+	}
+
+	return &pluginv1.ProviderSearchResult{
+		ProviderId:    providerID,
+		ItemType:      itemType,
+		Title:         match.Title,
+		OriginalTitle: match.Title,
+		Year:          int32(match.PublishYear),
+		Overview:      match.Description,
+		ProviderIds:   providerIDs,
+		ImageUrl:      match.CoverURL,
+	}, nil
+}
+
+func metadataItemFromMatch(match metadata.Match, itemType string) (*pluginv1.MetadataItem, error) {
+	providerID := primaryProviderID(match)
+	providerIDs, err := stringStruct(providerIDsFromMatch(match))
+	if err != nil {
+		return nil, err
+	}
+
+	return &pluginv1.MetadataItem{
+		ProviderId:    providerID,
+		ItemType:      itemType,
+		Title:         match.Title,
+		OriginalTitle: match.Title,
+		Year:          int32(match.PublishYear),
+		Overview:      match.Description,
+		Genres:        append([]string(nil), match.Genres...),
+		ProviderIds:   providerIDs,
+		Metadata:      metadataStruct(match),
+		Runtime:       int32(match.DurationMin),
+		Studios:       publisherStudio(match.Publisher),
+		PosterPath:    match.CoverURL,
+		People:        peopleFromMatch(match),
+	}, nil
+}
+
+func providerIDsFromMatch(match metadata.Match) map[string]string {
+	ids := make(map[string]string)
+	providerID := primaryProviderID(match)
+	provider := strings.TrimSpace(match.Provider)
+
+	if provider != "" {
+		ids["provider"] = provider
+		if providerID != "" {
+			ids[provider] = providerID
+		}
+	}
+	if providerID != "" {
+		ids[capabilityID] = providerID
+	}
+	if asin := strings.TrimSpace(match.ASIN); asin != "" {
+		ids["asin"] = asin
+	}
+	if isbn := strings.TrimSpace(match.ISBN); isbn != "" {
+		ids["isbn"] = isbn
+	}
+
+	return ids
+}
+
+func primaryProviderID(match metadata.Match) string {
+	if id := strings.TrimSpace(match.ProviderID); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(match.ASIN); id != "" {
+		return id
+	}
+	return strings.TrimSpace(match.ISBN)
+}
+
+func stringStruct(value map[string]string) (*structpb.Struct, error) {
+	converted := make(map[string]any, len(value))
+	for key, entry := range value {
+		key = strings.TrimSpace(key)
+		entry = strings.TrimSpace(entry)
+		if key == "" || entry == "" {
+			continue
+		}
+		converted[key] = entry
+	}
+	if len(converted) == 0 {
+		return nil, nil
+	}
+	return structpb.NewStruct(converted)
+}
+
+func metadataStruct(match metadata.Match) *structpb.Struct {
+	values := map[string]string{
+		"subtitle":        match.Subtitle,
+		"isbn":            match.ISBN,
+		"asin":            match.ASIN,
+		"publisher":       match.Publisher,
+		"language":        match.Language,
+		"series_name":     match.SeriesName,
+		"series_position": match.SeriesPosition,
+	}
+
+	converted := make(map[string]any, len(values)+1)
+	for key, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			converted[key] = value
+		}
+	}
+	if match.DurationMin > 0 {
+		converted["duration_min"] = match.DurationMin
+	}
+	if len(converted) == 0 {
+		return nil
+	}
+	result, err := structpb.NewStruct(converted)
+	if err != nil {
+		return nil
+	}
+	return result
+}
+
+func publisherStudio(publisher string) []string {
+	publisher = strings.TrimSpace(publisher)
+	if publisher == "" {
+		return nil
+	}
+	return []string{publisher}
+}
+
+func peopleFromMatch(match metadata.Match) []*pluginv1.PersonRecord {
+	people := make([]*pluginv1.PersonRecord, 0, len(match.Authors)+len(match.Narrators))
+	for _, name := range match.Authors {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		people = append(people, &pluginv1.PersonRecord{
+			Name:      name,
+			Kind:      "author",
+			SortOrder: int32(len(people)),
+		})
+	}
+	for _, name := range match.Narrators {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		people = append(people, &pluginv1.PersonRecord{
+			Name:      name,
+			Kind:      "narrator",
+			SortOrder: int32(len(people)),
+		})
+	}
+	if len(people) == 0 {
+		return nil
+	}
+	return people
 }
