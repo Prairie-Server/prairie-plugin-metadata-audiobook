@@ -27,21 +27,27 @@ type searchProvider interface {
 
 // Provider is the coordinator for all audiobook metadata sources.
 type Provider struct {
-	Audnexus *AudnexusClient
-	AudiMeta *AudiMetaClient
-	ITunes   *ITunesClient
-	Audible  *AudibleScraper
-	Storytel *StorytelScraper
+	Audnexus        *AudnexusClient
+	AudiMeta        *AudiMetaClient
+	ITunes          *ITunesClient
+	Audible         *AudibleScraper
+	Storytel        *StorytelScraper
+	BookBeat        *BookBeatScraper
+	Audioteka       *AudiotekaScraper
+	AudiobookCovers *AudiobookCoversClient
 }
 
 // NewProvider creates a Provider with all source clients initialized.
 func NewProvider() *Provider {
 	return &Provider{
-		Audnexus: NewAudnexusClient(),
-		AudiMeta: NewAudiMetaClient(),
-		ITunes:   NewITunesClient(),
-		Audible:  NewAudibleScraper(),
-		Storytel: NewStorytelScraper(),
+		Audnexus:        NewAudnexusClient(),
+		AudiMeta:        NewAudiMetaClient(),
+		ITunes:          NewITunesClient(),
+		Audible:         NewAudibleScraper(),
+		Storytel:        NewStorytelScraper(),
+		BookBeat:        NewBookBeatScraper(),
+		Audioteka:       NewAudiotekaScraper(),
+		AudiobookCovers: NewAudiobookCoversClient(),
 	}
 }
 
@@ -60,6 +66,9 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 		{"itunes", p.ITunes},
 		{"audible", p.Audible},
 		{"storytel", p.Storytel},
+		{"bookbeat", p.BookBeat},
+		{"audioteka", p.Audioteka},
+		{"audiobookcovers", p.AudiobookCovers},
 	}
 
 	type result struct {
@@ -140,6 +149,19 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 		if id := firstProviderID(q.ProviderIDs, "storytel", capabilityProviderID); id != "" {
 			return p.Storytel.Fetch(tctx, id)
 		}
+	case "bookbeat":
+		if id := firstProviderID(q.ProviderIDs, "bookbeat", capabilityProviderID); id != "" {
+			return p.BookBeat.Fetch(tctx, id)
+		}
+	case "audioteka":
+		if id := firstProviderID(q.ProviderIDs, "audioteka", capabilityProviderID); id != "" {
+			return p.Audioteka.Fetch(tctx, id)
+		}
+	case "audiobookcovers":
+		asin := firstProviderID(q.ProviderIDs, "asin", "audiobookcovers", capabilityProviderID)
+		if asin != "" {
+			return p.AudiobookCovers.Fetch(tctx, asin)
+		}
 	}
 
 	// Fallback: if an ASIN is present, try Audnexus then AudiMeta. Only
@@ -165,7 +187,16 @@ func providerHintFromIDs(ids map[string]string) string {
 	if hint := strings.TrimSpace(ids["provider"]); hint != "" {
 		return hint
 	}
-	for _, provider := range []string{"audnexus", "audimeta", "itunes", "audible", "storytel"} {
+	for _, provider := range []string{
+		"audnexus",
+		"audimeta",
+		"itunes",
+		"audible",
+		"storytel",
+		"bookbeat",
+		"audioteka",
+		"audiobookcovers",
+	} {
 		if strings.TrimSpace(ids[provider]) != "" {
 			return provider
 		}
@@ -174,6 +205,7 @@ func providerHintFromIDs(ids map[string]string) string {
 }
 
 func isLikelyASIN(value string) bool {
+	value = strings.ToUpper(strings.TrimSpace(value))
 	if len(value) != 10 {
 		return false
 	}
@@ -184,6 +216,18 @@ func isLikelyASIN(value string) bool {
 		return false
 	}
 	return true
+}
+
+func isLikelyAudibleASIN(value string) bool {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if len(value) != 10 || !strings.HasPrefix(value, "B0") {
+		return false
+	}
+	return isLikelyASIN(value)
+}
+
+func normalizeASIN(value string) string {
+	return strings.ToUpper(strings.TrimSpace(value))
 }
 
 func firstProviderID(ids map[string]string, keys ...string) string {

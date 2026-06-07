@@ -22,7 +22,7 @@
       "type": "metadata_provider.v1",
       "id": "audiobook-metadata",
       "display_name": "Audiobook Metadata",
-      "description": "Metadata provider for audiobook items. Wraps Audnexus, AudiMeta, iTunes, Audible, and Storytel.",
+      "description": "Metadata provider for audiobook items. Wraps Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat, Audioteka, and AudiobookCovers.",
       "metadata": {
         "default_priority": {
           "audiobook": 2
