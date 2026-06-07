@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -164,7 +163,6 @@ func traverseAudiotekaData(v interface{}, out *[]metadata.Match, depth int) {
 			if match := audiotekaMapToMatch(val); match != nil {
 				*out = append(*out, *match)
 			}
-			return
 		}
 		for _, child := range val {
 			traverseAudiotekaData(child, out, depth+1)
@@ -207,7 +205,7 @@ func audiotekaMapToMatch(m map[string]interface{}) *metadata.Match {
 	if series, ok := m["series"].(map[string]interface{}); ok {
 		match.SeriesName = stringField(series, "name")
 		if pos, ok := series["orderInSeries"].(float64); ok {
-			match.SeriesPosition = strconv.Itoa(int(pos))
+			match.SeriesPosition = numberPosition(pos)
 		}
 	}
 	for _, key := range []string{"categories", "genres", "kategorie"} {

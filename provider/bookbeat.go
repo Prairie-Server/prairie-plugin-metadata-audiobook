@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -164,7 +163,6 @@ func traverseBookBeatNextData(v interface{}, out *[]metadata.Match, depth int) {
 			if match := bookBeatMapToMatch(val); match != nil {
 				*out = append(*out, *match)
 			}
-			return
 		}
 		for _, child := range val {
 			traverseBookBeatNextData(child, out, depth+1)
@@ -210,7 +208,7 @@ func bookBeatMapToMatch(m map[string]interface{}) *metadata.Match {
 	if series, ok := m["series"].(map[string]interface{}); ok {
 		match.SeriesName = stringField(series, "name")
 		if pos, ok := series["orderInSeries"].(float64); ok {
-			match.SeriesPosition = strconv.Itoa(int(pos))
+			match.SeriesPosition = numberPosition(pos)
 		}
 	}
 	match.Genres = stringArrayFromField(m["categories"])

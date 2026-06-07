@@ -46,3 +46,49 @@ func TestAudiotekaParseInitialState(t *testing.T) {
 		t.Fatalf("series = %q/%q", match.SeriesName, match.SeriesPosition)
 	}
 }
+
+func TestAudiotekaParseInitialStateCollectsNestedSiblingBooks(t *testing.T) {
+	html := `<script>window.__INITIAL_STATE__={
+	  "catalog": {
+	    "featured": {
+	      "id": "first-book",
+	      "title": "First Book",
+	      "authors": [{"name": "Author One"}],
+	      "related": [{
+	        "id": "second-book",
+	        "title": "Second Book",
+	        "authors": [{"name": "Author Two"}]
+	      }]
+	    }
+	  }
+	};</script>`
+
+	results := parseAudiotekaSearch(html)
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].Title != "First Book" || results[1].Title != "Second Book" {
+		t.Fatalf("titles = %q, %q", results[0].Title, results[1].Title)
+	}
+}
+
+func TestAudiotekaParseInitialStatePreservesDecimalSeriesPosition(t *testing.T) {
+	html := `<script>window.__INITIAL_STATE__={
+	  "catalog": {
+	    "book": {
+	      "id": "middle-book",
+	      "title": "Middle Book",
+	      "authors": [{"name": "Author"}],
+	      "series": {"name": "Series", "orderInSeries": 1.5}
+	    }
+	  }
+	};</script>`
+
+	results := parseAudiotekaSearch(html)
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].SeriesPosition != "1.5" {
+		t.Fatalf("SeriesPosition = %q, want 1.5", results[0].SeriesPosition)
+	}
+}
