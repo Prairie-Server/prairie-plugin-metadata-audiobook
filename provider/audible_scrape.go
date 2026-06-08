@@ -119,11 +119,12 @@ func (s *AudibleScraper) Search(ctx context.Context, q metadata.SearchQuery) ([]
 
 // Fetch scrapes the Audible product page for the given ASIN.
 func (s *AudibleScraper) Fetch(ctx context.Context, asin string) (*metadata.Match, error) {
+	asin = normalizeASIN(asin)
 	if err := waitForLimiter(ctx, s.limiter); err != nil {
 		return nil, err
 	}
 
-	pageURL := s.baseURL() + "/pd/" + url.PathEscape(strings.ToUpper(asin))
+	pageURL := s.baseURL() + "/pd/" + url.PathEscape(asin)
 	doc, err := s.fetchDoc(ctx, pageURL)
 	if err != nil {
 		return nil, err
