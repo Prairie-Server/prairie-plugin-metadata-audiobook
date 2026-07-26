@@ -8,7 +8,7 @@ require google.golang.org/grpc v1.75.1 // indirect
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
-	github.com/prairie-server/prairie-plugin-sdk v0.12.1-0.20260726223239-3c6de05cade7
+	github.com/prairie-server/prairie-plugin-sdk v0.12.1-0.20260726225228-1dfb0aebf7e0
 	golang.org/x/time v0.12.0
 )
 
