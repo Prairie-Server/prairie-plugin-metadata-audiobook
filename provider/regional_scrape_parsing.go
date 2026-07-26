@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 var audiotekaInitialStateRE = regexp.MustCompile(

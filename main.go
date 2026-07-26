@@ -11,11 +11,11 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
-	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
-	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
-	"github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/runtime"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
+	pluginv1 "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginproto/prairie/plugin/v1"
+	publicmanifest "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginsdk/manifest"
+	"github.com/prairie-server/prairie-plugin-sdk/pkg/pluginsdk/runtime"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".

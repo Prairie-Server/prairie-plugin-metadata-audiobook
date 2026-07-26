@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/provider"
-	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
+	pluginv1 "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginproto/prairie/plugin/v1"
 )
 
 func TestRuntimeServerConfigure_NoOp(t *testing.T) {

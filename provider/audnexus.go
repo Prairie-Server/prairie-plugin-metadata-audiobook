@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 // AudnexusClient queries https://api.audnex.us for audiobook metadata.
@@ -236,7 +236,7 @@ func (c *AudnexusClient) get(ctx context.Context, reqURL string) ([]byte, error)
 		return nil, fmt.Errorf("audnexus: create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Silo/1.0")
+	req.Header.Set("User-Agent", "Prairie/1.0")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

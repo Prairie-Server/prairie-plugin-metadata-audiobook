@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 const audiobookCoversBaseURL = "https://api.audiobookcovers.com"
@@ -58,7 +58,7 @@ func (a *AudiobookCoversClient) Fetch(ctx context.Context, asin string) (*metada
 	if err != nil {
 		return nil, fmt.Errorf("audiobookcovers: create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "silo-audiobook-metadata/audiobookcovers")
+	req.Header.Set("User-Agent", "prairie-audiobook-metadata/audiobookcovers")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("audiobookcovers: request: %w", err)

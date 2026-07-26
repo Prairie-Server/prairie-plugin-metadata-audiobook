@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 const audiotekaBaseURL = "https://audioteka.com"
@@ -103,7 +103,7 @@ func (a *AudiotekaScraper) fetch(ctx context.Context, fetchURL string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("audioteka: create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "silo-audiobook-metadata/audioteka")
+	req.Header.Set("User-Agent", "prairie-audiobook-metadata/audioteka")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("audioteka: request: %w", err)

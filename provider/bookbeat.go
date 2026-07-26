@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 const bookBeatBaseURL = "https://www.bookbeat.com"
@@ -108,7 +108,7 @@ func (b *BookBeatScraper) fetch(ctx context.Context, fetchURL string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("bookbeat: create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "silo-audiobook-metadata/bookbeat")
+	req.Header.Set("User-Agent", "prairie-audiobook-metadata/bookbeat")
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("bookbeat: request: %w", err)
