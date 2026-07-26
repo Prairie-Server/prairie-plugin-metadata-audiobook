@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 // AudiMetaClient queries the AudiMeta API for audiobook metadata.
@@ -286,7 +286,7 @@ func (c *AudiMetaClient) get(ctx context.Context, reqURL string) ([]byte, error)
 		return nil, fmt.Errorf("audimeta: create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Silo/1.0")
+	req.Header.Set("User-Agent", "Prairie/1.0")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -14,7 +14,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 // AudibleScraper scrapes Audible product pages for audiobook metadata.

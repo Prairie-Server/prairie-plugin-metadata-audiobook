@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 // ITunesClient queries the Apple iTunes Search API for audiobook metadata.

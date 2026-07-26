@@ -1,19 +1,19 @@
 {
-  "plugin_id": "silo.audiobook-metadata",
+  "plugin_id": "prairie.audiobook-metadata",
   "version": "0.1.3",
   "checksum": "__CHECKSUM__",
-  "silo_api_version": "v1",
+  "prairie_api_version": "v1",
   "presentation": {
     "display_name": "Audiobook Metadata",
     "summary": "Fetch audiobook metadata and artwork from multiple book and audiobook sources.",
-    "description_markdown": "Matches audiobook items across Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat, Audioteka, and AudiobookCovers. It combines those sources into metadata and artwork for Silo audiobook libraries.",
+    "description_markdown": "Matches audiobook items across Audnexus, AudiMeta, iTunes, Audible, Storytel, BookBeat, Audioteka, and AudiobookCovers. It combines those sources into metadata and artwork for Prairie audiobook libraries.",
     "setup_markdown": "Install the plugin and add **Audiobook Metadata** to the metadata provider chain for an audiobook library. The default sources need no plugin configuration; upstream availability and rate limits still apply.",
-    "homepage_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
-    "source_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook",
-    "support_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook/issues",
-    "changelog_url": "https://github.com/Silo-Server/silo-plugin-metadata-audiobook/releases",
-    "publisher_name": "Silo",
-    "publisher_url": "https://github.com/Silo-Server",
+    "homepage_url": "https://github.com/prairie-server/prairie-plugin-metadata-audiobook",
+    "source_url": "https://github.com/prairie-server/prairie-plugin-metadata-audiobook",
+    "support_url": "https://github.com/prairie-server/prairie-plugin-metadata-audiobook/issues",
+    "changelog_url": "https://github.com/prairie-server/prairie-plugin-metadata-audiobook/releases",
+    "publisher_name": "Prairie",
+    "publisher_url": "https://github.com/prairie-server",
     "license_spdx": "AGPL-3.0-only"
   },
   "supported_platforms": [

@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Silo-Server/silo-plugin-audiobook-metadata/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 
 func TestITunesSearch(t *testing.T) {
