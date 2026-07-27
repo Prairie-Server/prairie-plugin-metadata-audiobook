@@ -93,6 +93,11 @@ func (b *BookBeatScraper) Fetch(ctx context.Context, externalID string) (*metada
 	return nil, nil
 }
 
+// SetBaseURL overrides the BookBeat origin. Used for testing.
+func (b *BookBeatScraper) SetBaseURL(url string) {
+	b.baseURL = url
+}
+
 func (b *BookBeatScraper) host() string {
 	if b.baseURL != bookBeatBaseURL {
 		return b.baseURL

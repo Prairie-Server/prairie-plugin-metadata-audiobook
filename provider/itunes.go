@@ -29,6 +29,11 @@ type ITunesClient struct {
 	limiter    *rate.Limiter
 }
 
+// SetBaseURL overrides the API origin. Used for testing.
+func (c *ITunesClient) SetBaseURL(url string) {
+	c.baseURL = url
+}
+
 // iTunesSearchResponse wraps the iTunes JSON envelope.
 type iTunesSearchResponse struct {
 	ResultCount int              `json:"resultCount"`

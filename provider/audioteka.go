@@ -88,6 +88,11 @@ func (a *AudiotekaScraper) Fetch(ctx context.Context, externalID string) (*metad
 	return match, nil
 }
 
+// SetBaseURL overrides the Audioteka origin. Used for testing.
+func (a *AudiotekaScraper) SetBaseURL(url string) {
+	a.baseURL = url
+}
+
 func (a *AudiotekaScraper) host() string {
 	if a.baseURL != audiotekaBaseURL {
 		return a.baseURL
