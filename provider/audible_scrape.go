@@ -72,7 +72,6 @@ func (s *AudibleScraper) SetHTTPClient(client *http.Client) {
 	s.httpClient = client
 }
 
-
 func (s *AudibleScraper) tld() string {
 	if tld, ok := audibleRegionMap[s.region]; ok {
 		return tld

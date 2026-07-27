@@ -81,7 +81,6 @@ func (s *StorytelScraper) SetHTTPClient(client *http.Client) {
 	s.httpClient = client
 }
 
-
 func (s *StorytelScraper) domain() string {
 	if d, ok := storytelRegionDomain[s.region]; ok {
 		return "storytel." + d
@@ -255,17 +254,17 @@ func parseStorytelBookPage(html string) *metadata.Match {
 	// 1. Try JSON-LD.
 	if m := jsonLdRE.FindStringSubmatch(html); len(m) == 2 {
 		var node struct {
-			Type        string      `json:"@type"`
-			Name        string      `json:"name"`
-			Description string      `json:"description"`
-			Image       string      `json:"image"`
-			InLanguage  string      `json:"inLanguage"`
-			DatePublished string    `json:"datePublished"`
-			Duration    string      `json:"duration"`
-			ISBN        string      `json:"isbn"`
-			Author      interface{} `json:"author"`
-			ReadBy      interface{} `json:"readBy"`
-			Publisher   interface{} `json:"publisher"`
+			Type            string      `json:"@type"`
+			Name            string      `json:"name"`
+			Description     string      `json:"description"`
+			Image           string      `json:"image"`
+			InLanguage      string      `json:"inLanguage"`
+			DatePublished   string      `json:"datePublished"`
+			Duration        string      `json:"duration"`
+			ISBN            string      `json:"isbn"`
+			Author          interface{} `json:"author"`
+			ReadBy          interface{} `json:"readBy"`
+			Publisher       interface{} `json:"publisher"`
 			AggregateRating *struct {
 				RatingValue float64 `json:"ratingValue"`
 				RatingCount int     `json:"ratingCount"`

@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
-	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
 	pluginv1 "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginproto/prairie/plugin/v1"
 	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
 )
 
 func TestRuntimeServerConfigure_NoOp(t *testing.T) {
@@ -228,8 +229,11 @@ func TestMainHelpersAudiobook(t *testing.T) {
 		t.Fatal(m)
 	}
 	ids := providerIDsFromProto(st, capabilityID, "fallback")
-	if ids[capabilityID] != "fallback" && ids["audible"] != "B012345678" {
-		// fallback only applied when capability missing
+	if ids[capabilityID] != "fallback" {
+		t.Fatalf("capability fallback = %q, want fallback", ids[capabilityID])
+	}
+	if ids["audible"] != "B012345678" {
+		t.Fatalf("audible id = %q, want B012345678", ids["audible"])
 	}
 	if primaryProviderID(metadata.Match{ProviderID: "id1", ASIN: "B0"}) != "id1" {
 		t.Fatal("primary")
