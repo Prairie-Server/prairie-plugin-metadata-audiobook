@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,67 @@ func TestAudibleParseProductPageNilDocument(t *testing.T) {
 	scraper := NewAudibleScraper()
 	if match := scraper.parseProductPage(nil, "B002V0QHBU"); match != nil {
 		t.Fatalf("parseProductPage(nil) = %#v, want nil", match)
+	}
+}
+
+func TestAudibleParseProductPageSingleJSONLDAndNoBook(t *testing.T) {
+	html := `<html><body>
+<script type="application/ld+json">{
+  "@type": "BreadcrumbList",
+  "itemListElement": [{"item":{"name":"Home"}},{"item":{"name":"Mystery"}}]
+}</script>
+<script type="application/ld+json">{
+  "@type":"Audiobook",
+  "name":"Standalone Title",
+  "description":"<p>Desc</p>",
+  "image":"https://cdn.example.test/cover.jpg",
+  "inLanguage":"en",
+  "datePublished":"2022-04-05",
+  "duration":"PT45M30S",
+  "author":{"name":"Solo Author"},
+  "readBy":[{"name":"Narrator One"},{"name":""}],
+  "publisher":"Example Audio"
+}</script>
+<a href="/series/example">Example Series</a>
+</body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := NewAudibleScraper().parseProductPage(doc, "b002v0qhbu")
+	if match == nil {
+		t.Fatal("expected match")
+	}
+	if match.Title != "Standalone Title" || match.Subtitle != "" {
+		t.Fatalf("title/subtitle = %q/%q", match.Title, match.Subtitle)
+	}
+	if match.DurationMin != 45 || match.PublishYear != 2022 {
+		t.Fatalf("duration/year = %d/%d", match.DurationMin, match.PublishYear)
+	}
+	if len(match.Genres) != 1 || match.Genres[0] != "Mystery" {
+		t.Fatalf("genres = %#v", match.Genres)
+	}
+	if match.SeriesName != "Example Series" || match.SeriesPosition != "" {
+		t.Fatalf("series = %q/%q", match.SeriesName, match.SeriesPosition)
+	}
+
+	noBook, err := goquery.NewDocumentFromReader(strings.NewReader(`<script type="application/ld+json">{"@type":"WebPage"}</script>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NewAudibleScraper().parseProductPage(noBook, "B002V0QHBU"); got != nil {
+		t.Fatalf("parseProductPage(no audiobook) = %#v, want nil", got)
+	}
+
+	colonDoc, err := goquery.NewDocumentFromReader(strings.NewReader(`<script type="application/ld+json">{
+  "@type":"Audiobook","name":"Main Title: The Subtitle","author":{"name":"A"}
+}</script><a href="/series/blank"></a>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	colon := NewAudibleScraper().parseProductPage(colonDoc, "B002V0QHBU")
+	if colon == nil || colon.Title != "Main Title" || colon.Subtitle != "The Subtitle" {
+		t.Fatalf("colon title = %#v", colon)
 	}
 }
 
@@ -185,6 +247,24 @@ func TestParseISODurationToMin(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("parseISODurationToMin(%q) = %d, want %d", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestAudibleJSONLDPersonNamesInvalidShapes(t *testing.T) {
+	if got := extractJSONLDPersonNames(nil); got != nil {
+		t.Fatalf("nil names = %#v", got)
+	}
+	if got := extractJSONLDPersonNames(json.RawMessage(`{"name":""}`)); got != nil {
+		t.Fatalf("empty single name = %#v", got)
+	}
+	if got := extractJSONLDPersonNames(json.RawMessage(`not-json`)); got != nil {
+		t.Fatalf("invalid names = %#v", got)
+	}
+	if got := extractJSONLDPersonNames(json.RawMessage(`[{"name":""},{"name":"Kept"}]`)); len(got) != 1 || got[0] != "Kept" {
+		t.Fatalf("filtered names = %#v", got)
+	}
+	if got := parseDigits("12x"); got != 0 {
+		t.Fatalf("parseDigits invalid = %d, want 0", got)
 	}
 }
 

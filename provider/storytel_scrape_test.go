@@ -1,7 +1,11 @@
 package provider
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -119,6 +123,70 @@ func TestStorytelParseBookPage_JSONLD(t *testing.T) {
 	}
 	if m.Publisher != "Test Publisher" {
 		t.Errorf("Publisher = %q", m.Publisher)
+	}
+}
+
+func TestStorytelParseBookPageFallbacksAndEdges(t *testing.T) {
+	next := `<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"book":{
+	  "bookId":"book-2","title":"Fallback Book","description":"D",
+	  "authors":[{"name":""},{"name":"Author"}],"narrators":[{"name":"Narrator"}],
+	  "cover":{"url":"https://cdn.example.test/fallback.jpg"},
+	  "series":{"name":"Series","orderInSeries":0}
+	}}}}</script>`
+	match := parseStorytelBookPage(next)
+	if match == nil {
+		t.Fatal("expected fallback match")
+	}
+	if match.ProviderID != "book-2" || match.CoverURL != "https://cdn.example.test/fallback.jpg" {
+		t.Fatalf("id/cover = %q/%q", match.ProviderID, match.CoverURL)
+	}
+	if match.SeriesPosition != "" || match.DurationMin != 0 {
+		t.Fatalf("series/duration = %q/%d", match.SeriesPosition, match.DurationMin)
+	}
+
+	if got := parseStorytelSearch(`<script id="__NEXT_DATA__" type="application/json">not-json</script>`); got != nil {
+		t.Fatalf("invalid search = %#v, want nil", got)
+	}
+	if got := parseStorytelSearch(`<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"books":[]}}}</script>`); got != nil {
+		t.Fatalf("empty search = %#v, want nil", got)
+	}
+	if got := parseStorytelBookPage(`<script type="application/ld+json">{"@type":"WebPage"}</script>`); got != nil {
+		t.Fatalf("non-book jsonld = %#v, want nil", got)
+	}
+	if got := extractJSONLDNamesFromInterface([]interface{}{map[string]interface{}{"name": ""}, 7}); len(got) != 0 {
+		t.Fatalf("empty mixed names = %#v", got)
+	}
+	if got := extractJSONLDNamesFromInterface(7); got != nil {
+		t.Fatalf("numeric names = %#v, want nil", got)
+	}
+}
+
+func TestStorytelFetchStatusPaths(t *testing.T) {
+	scraper := NewStorytelScraper()
+	scraper.limiter = newLimiter(1000)
+
+	scraper.SetHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})})
+	if body, err := scraper.fetch(context.Background(), "https://example.test/not-found"); err != nil || body != "" {
+		t.Fatalf("404 body=%q err=%v", body, err)
+	}
+
+	scraper.SetHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTeapot,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})})
+	if _, err := scraper.fetch(context.Background(), "https://example.test/teapot"); err == nil {
+		t.Fatal("expected status error")
 	}
 }
 
