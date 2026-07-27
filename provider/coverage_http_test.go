@@ -546,6 +546,197 @@ func TestAudnexusAudimetaCoversErrorPaths(t *testing.T) {
 	}
 }
 
+func TestAPINotFoundDecodeAndInvalidInputPaths(t *testing.T) {
+	t.Parallel()
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(notFound.Close)
+	invalidJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	t.Cleanup(invalidJSON.Close)
+	emptyCover := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"cover_url":""}`))
+	}))
+	t.Cleanup(emptyCover.Close)
+
+	am404 := NewAudiMetaClient()
+	am404.SetBaseURL(notFound.URL)
+	am404.limiter = newLimiter(1000)
+	if m, err := am404.Fetch(context.Background(), "B002V0QHBU"); err != nil || m != nil {
+		t.Fatalf("audimeta 404 = %#v err=%v", m, err)
+	}
+	if results, err := am404.Search(context.Background(), metadata.SearchQuery{ProviderIDs: map[string]string{"asin": "B002V0QHBU"}}); err != nil || results != nil {
+		t.Fatalf("audimeta asin 404 = %#v err=%v", results, err)
+	}
+	amBad := NewAudiMetaClient()
+	amBad.SetBaseURL(invalidJSON.URL)
+	amBad.limiter = newLimiter(1000)
+	if _, err := amBad.Fetch(context.Background(), "B002V0QHBU"); err == nil {
+		t.Fatal("expected audimeta fetch decode error")
+	}
+	if _, err := amBad.Search(context.Background(), metadata.SearchQuery{Title: "x"}); err == nil {
+		t.Fatal("expected audimeta search decode error")
+	}
+	if results, err := amBad.Search(context.Background(), metadata.SearchQuery{}); err != nil || results != nil {
+		t.Fatalf("audimeta empty search = %#v err=%v", results, err)
+	}
+
+	an404 := NewAudnexusClient()
+	an404.SetBaseURL(notFound.URL)
+	an404.limiter = newLimiter(1000)
+	if _, err := an404.Fetch(context.Background(), "B002V0QHBU"); err == nil {
+		t.Fatal("expected audnexus 404 decode error")
+	}
+	if results, err := an404.Search(context.Background(), metadata.SearchQuery{}); err != nil || results != nil {
+		t.Fatalf("audnexus empty search = %#v err=%v", results, err)
+	}
+	anBad := NewAudnexusClient()
+	anBad.SetBaseURL(invalidJSON.URL)
+	anBad.limiter = newLimiter(1000)
+	if _, err := anBad.Fetch(context.Background(), "B002V0QHBU"); err == nil {
+		t.Fatal("expected audnexus fetch decode error")
+	}
+
+	coversEmpty := NewAudiobookCoversClient()
+	coversEmpty.SetBaseURL(emptyCover.URL)
+	coversEmpty.limiter = newLimiter(1000)
+	if m, err := coversEmpty.Fetch(context.Background(), "B002V0QHBU"); err != nil || m != nil {
+		t.Fatalf("empty cover = %#v err=%v", m, err)
+	}
+	if m, err := coversEmpty.Fetch(context.Background(), "not-an-asin"); err != nil || m != nil {
+		t.Fatalf("invalid cover id = %#v err=%v", m, err)
+	}
+	if results, err := coversEmpty.Search(context.Background(), metadata.SearchQuery{Title: "not-an-asin"}); err != nil || results != nil {
+		t.Fatalf("invalid cover search = %#v err=%v", results, err)
+	}
+}
+
+type errReadCloser struct{}
+
+func (errReadCloser) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (errReadCloser) Close() error             { return nil }
+
+func TestRemainingProviderEdgeBranches(t *testing.T) {
+	t.Parallel()
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, run := range map[string]func(context.Context) error{
+		"audimeta search": func(ctx context.Context) error {
+			_, err := NewAudiMetaClient().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"audimeta fetch": func(ctx context.Context) error {
+			_, err := NewAudiMetaClient().Fetch(ctx, "B002V0QHBU")
+			return err
+		},
+		"audnexus search": func(ctx context.Context) error {
+			_, err := NewAudnexusClient().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"audnexus fetch": func(ctx context.Context) error {
+			_, err := NewAudnexusClient().Fetch(ctx, "B002V0QHBU")
+			return err
+		},
+		"itunes search": func(ctx context.Context) error {
+			_, err := NewITunesClient().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"bookbeat search": func(ctx context.Context) error {
+			_, err := NewBookBeatScraper().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"bookbeat fetch": func(ctx context.Context) error {
+			_, err := NewBookBeatScraper().Fetch(ctx, "book")
+			return err
+		},
+		"audioteka search": func(ctx context.Context) error {
+			_, err := NewAudiotekaScraper().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"audioteka fetch": func(ctx context.Context) error {
+			_, err := NewAudiotekaScraper().Fetch(ctx, "book")
+			return err
+		},
+		"storytel search": func(ctx context.Context) error {
+			_, err := NewStorytelScraper().Search(ctx, metadata.SearchQuery{Title: "x"})
+			return err
+		},
+		"storytel fetch": func(ctx context.Context) error {
+			_, err := NewStorytelScraper().Fetch(ctx, "book")
+			return err
+		},
+		"covers fetch": func(ctx context.Context) error {
+			_, err := NewAudiobookCoversClient().Fetch(ctx, "B002V0QHBU")
+			return err
+		},
+	} {
+		if err := run(canceled); err == nil {
+			t.Fatalf("%s: expected canceled context error", name)
+		}
+	}
+
+	badURL := "http://[::1"
+	if _, err := NewBookBeatScraper().fetch(context.Background(), badURL); err == nil {
+		t.Fatal("bookbeat create request error")
+	}
+	if _, err := NewAudiotekaScraper().fetch(context.Background(), badURL); err == nil {
+		t.Fatal("audioteka create request error")
+	}
+	if _, err := NewStorytelScraper().fetch(context.Background(), badURL); err == nil {
+		t.Fatal("storytel create request error")
+	}
+	if _, err := NewAudibleScraper().fetchDoc(context.Background(), badURL); err == nil {
+		t.Fatal("audible create request error")
+	}
+	if _, err := NewITunesClient().get(context.Background(), badURL); err == nil {
+		t.Fatal("itunes create request error")
+	}
+	if _, err := NewAudnexusClient().get(context.Background(), badURL); err == nil {
+		t.Fatal("audnexus create request error")
+	}
+	if _, err := NewAudiMetaClient().get(context.Background(), badURL); err == nil {
+		t.Fatal("audimeta create request error")
+	}
+	covers := NewAudiobookCoversClient()
+	covers.baseURL = badURL
+	covers.limiter = newLimiter(1000)
+	if _, err := covers.Fetch(context.Background(), "B002V0QHBU"); err == nil {
+		t.Fatal("covers create request error")
+	}
+
+	readErrClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: errReadCloser{}, Header: make(http.Header), Request: req}, nil
+	})}
+	if _, err := readLimitedBody(&http.Response{StatusCode: http.StatusOK, Body: errReadCloser{}}, "test"); err == nil {
+		t.Fatal("readLimitedBody read error")
+	}
+	st := NewStorytelScraper()
+	st.SetHTTPClient(readErrClient)
+	if _, err := st.fetch(context.Background(), "https://example.test/book"); err == nil {
+		t.Fatal("storytel read error")
+	}
+	it := NewITunesClient()
+	it.httpClient = readErrClient
+	if _, err := it.get(context.Background(), "https://example.test/search"); err == nil {
+		t.Fatal("itunes read error")
+	}
+	an := NewAudnexusClient()
+	an.httpClient = readErrClient
+	if _, err := an.get(context.Background(), "https://example.test/books"); err == nil {
+		t.Fatal("audnexus read error")
+	}
+	am := NewAudiMetaClient()
+	am.httpClient = readErrClient
+	if _, err := am.get(context.Background(), "https://example.test/books"); err == nil {
+		t.Fatal("audimeta read error")
+	}
+}
+
 func TestReadLimitedBodyAndHelpers(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

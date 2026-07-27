@@ -262,6 +262,9 @@ func TestPrimaryProviderIDAndPeopleEdges(t *testing.T) {
 	if primaryProviderID(metadata.Match{}) != "" {
 		t.Fatal("empty")
 	}
+	if primaryProviderID(metadata.Match{ISBN: " 9781234567890 "}) != "9781234567890" {
+		t.Fatal("isbn fallback")
+	}
 	people := peopleFromMatch(metadata.Match{Authors: []string{"", "A"}, Narrators: []string{"N", ""}})
 	if len(people) != 2 {
 		t.Fatalf("%#v", people)
@@ -269,5 +272,47 @@ func TestPrimaryProviderIDAndPeopleEdges(t *testing.T) {
 	item, err := metadataItemFromMatch(metadata.Match{Provider: "x", ProviderID: "1", Title: "T"}, "audiobook")
 	if err != nil || item == nil {
 		t.Fatal(err)
+	}
+	if metadataStruct(metadata.Match{}) != nil {
+		t.Fatal("empty metadata struct")
+	}
+	result, err := providerSearchResultFromMatch(metadata.Match{Title: "No ID"}, "audiobook")
+	if err != nil || result != nil {
+		t.Fatalf("no-id result = %#v err=%v", result, err)
+	}
+	st, _ := structpb.NewStruct(map[string]any{capabilityID: "existing"})
+	ids := providerIDsFromProto(st, capabilityID, "fallback")
+	if ids[capabilityID] != "existing" {
+		t.Fatalf("fallback overwrote capability id: %#v", ids)
+	}
+	original := version
+	version = ""
+	t.Cleanup(func() { version = original })
+	manifest, err := loadManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.GetVersion() == "" || len(manifest.GetChecksum()) != 64 {
+		t.Fatalf("manifest version/checksum = %q/%q", manifest.GetVersion(), manifest.GetChecksum())
+	}
+}
+
+func TestMetadataServerGetMetadataPropagatesProviderError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := server.URL
+	server.Close()
+
+	p := provider.NewProvider()
+	p.BookBeat.SetBaseURL(url)
+	ms := &metadataServer{runtime: &runtimeServer{provider: p}}
+	resp, err := ms.GetMetadata(context.Background(), &pluginv1.GetMetadataRequest{
+		ProviderId: "missing",
+		ItemType:   "audiobook",
+		ProviderIds: mustStruct(t, map[string]any{
+			"bookbeat": "missing",
+		}),
+	})
+	if err == nil {
+		t.Fatalf("expected provider error, got response %#v", resp)
 	}
 }

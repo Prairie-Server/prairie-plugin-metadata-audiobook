@@ -99,3 +99,28 @@ func TestBookBeatParseNextDataPreservesDecimalSeriesPosition(t *testing.T) {
 		t.Fatalf("SeriesPosition = %q, want 1.5", results[0].SeriesPosition)
 	}
 }
+
+func TestBookBeatParseSearchLimitsAndInvalidData(t *testing.T) {
+	if got := parseBookBeatSearch(`no next data`); got != nil {
+		t.Fatalf("missing next data = %#v, want nil", got)
+	}
+	if got := parseBookBeatSearch(`<script id="__NEXT_DATA__" type="application/json">{bad</script>`); got != nil {
+		t.Fatalf("invalid next data = %#v, want nil", got)
+	}
+
+	html := `<script id="__NEXT_DATA__" type="application/json">{"books":[`
+	for i := 0; i < 25; i++ {
+		if i > 0 {
+			html += ","
+		}
+		html += `{"bookId":"id-` + string(rune('a'+i)) + `","title":"Title","authors":[]}`
+	}
+	html += `]}</script>`
+	results := parseBookBeatSearch(html)
+	if len(results) != 20 {
+		t.Fatalf("len(results) = %d, want 20", len(results))
+	}
+	if isBookBeatBook(map[string]interface{}{"title": "Only Title"}) {
+		t.Fatal("title-only object should not be treated as a book")
+	}
+}
