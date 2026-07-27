@@ -76,6 +76,12 @@ func NewStorytelScraper() *StorytelScraper {
 	}
 }
 
+// SetHTTPClient overrides the HTTP client. Used for testing.
+func (s *StorytelScraper) SetHTTPClient(client *http.Client) {
+	s.httpClient = client
+}
+
+
 func (s *StorytelScraper) domain() string {
 	if d, ok := storytelRegionDomain[s.region]; ok {
 		return "storytel." + d

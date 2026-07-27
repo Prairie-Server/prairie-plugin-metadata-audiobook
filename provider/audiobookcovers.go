@@ -29,6 +29,11 @@ func NewAudiobookCoversClient() *AudiobookCoversClient {
 	}
 }
 
+// SetBaseURL overrides the API origin. Used for testing.
+func (a *AudiobookCoversClient) SetBaseURL(url string) {
+	a.baseURL = url
+}
+
 func (a *AudiobookCoversClient) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	asin := firstProviderID(q.ProviderIDs, "asin", "audiobookcovers")
 	if asin == "" && isLikelyASIN(q.Title) {

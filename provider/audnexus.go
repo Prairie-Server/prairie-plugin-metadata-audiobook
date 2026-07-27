@@ -32,6 +32,11 @@ type AudnexusClient struct {
 	limiter    *rate.Limiter
 }
 
+// SetBaseURL overrides the API origin. Used for testing.
+func (c *AudnexusClient) SetBaseURL(url string) {
+	c.baseURL = url
+}
+
 // audnexusBook is the JSON shape returned by GET /books/{asin}.
 type audnexusBook struct {
 	ASIN             string              `json:"asin"`

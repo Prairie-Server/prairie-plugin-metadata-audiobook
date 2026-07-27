@@ -29,6 +29,11 @@ type AudiMetaClient struct {
 	limiter    *rate.Limiter
 }
 
+// SetBaseURL overrides the API origin. Used for testing.
+func (c *AudiMetaClient) SetBaseURL(url string) {
+	c.baseURL = url
+}
+
 // audiMetaBook is the detailed book shape from GET /books/{asin}.
 type audiMetaBook struct {
 	ASIN             string           `json:"asin"`
