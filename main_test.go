@@ -193,6 +193,12 @@ func TestMetadataServerSearch(t *testing.T) {
 	p.Audioteka.SetBaseURL(scrape.URL)
 	p.Audible.SetHTTPClient(quiet)
 	p.Storytel.SetHTTPClient(quiet)
+	// Scrapers are opt-in for title search; enable every source so the
+	// BookBeat/Audioteka fixtures are reached.
+	p.SetSources(provider.SourceConfig{
+		Audnexus: true, AudiMeta: true, ITunes: true, Audible: true,
+		Storytel: true, BookBeat: true, Audioteka: true, AudiobookCovers: true,
+	})
 
 	ms := &metadataServer{runtime: &runtimeServer{provider: p}}
 	resp, err := ms.Search(context.Background(), &pluginv1.SearchMetadataRequest{Query: "Midnight", ItemType: "audiobook"})
