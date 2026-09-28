@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -14,7 +16,24 @@ const (
 	capabilityProviderID = "audiobook-metadata"
 
 	// providerTimeout is the per-provider deadline for Search/Fetch calls.
-	providerTimeout = 10 * time.Second
+	//
+	// Must exceed the slowest provider's rate-limit interval, or that provider can
+	// never serve a second request. rate.Limiter.Wait fails IMMEDIATELY when the
+	// required wait would outlast the context deadline, so with the four scrapers
+	// at 6 rpm -- one request every 10s -- a 10s deadline meant every queued call
+	// returned "rate: Wait(n=1) would exceed context deadline" without a single
+	// HTTP request being made. That was 1,542 of the 2,645 errors seen in a
+	// 30-minute window on 2026-08-21.
+	//
+	// The ceiling is the host's own deadline: pluginhost.DefaultMetadataTimeout
+	// is 30s for a metadata RPC, so anything at or above that just moves the
+	// failure from us to the caller -- 35s produced a sweep of
+	// "rpc error: code = DeadlineExceeded" instead of results.
+	//
+	// 25s stays inside that budget with headroom for gRPC overhead while still
+	// leaving room for a full 10s limiter wait plus a slow scrape, so requests
+	// queue and succeed at the limited rate instead of failing instantly.
+	providerTimeout = 25 * time.Second
 
 	// searchWorkers is the maximum number of providers queried in parallel.
 	searchWorkers = 3
@@ -23,6 +42,29 @@ const (
 // searchProvider is the minimal interface each backend must satisfy.
 type searchProvider interface {
 	Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error)
+}
+
+// SourceConfig selects which sources take part in title searches. Every
+// source stays available for ID-based Fetch (an ASIN or iTunes ID already on
+// the item is always resolved), so disabling a source only removes it from
+// the search fan-out. Audnexus and iTunes are on by default: both are public
+// APIs that answer in well under a second. The scrapers default off because
+// each is throttled to one request every ten seconds and, with Audnexus
+// answering title queries, they rarely add a match the APIs did not.
+type SourceConfig struct {
+	Audnexus        bool
+	AudiMeta        bool
+	ITunes          bool
+	Audible         bool
+	Storytel        bool
+	BookBeat        bool
+	Audioteka       bool
+	AudiobookCovers bool
+}
+
+// DefaultSourceConfig is the fan-out used until the host supplies a config.
+func DefaultSourceConfig() SourceConfig {
+	return SourceConfig{Audnexus: true, ITunes: true, AudiobookCovers: true}
 }
 
 // Provider is the coordinator for all audiobook metadata sources.
@@ -35,11 +77,16 @@ type Provider struct {
 	BookBeat        *BookBeatScraper
 	Audioteka       *AudiotekaScraper
 	AudiobookCovers *AudiobookCoversClient
+
+	mu      sync.RWMutex
+	sources SourceConfig
 }
 
-// NewProvider creates a Provider with all source clients initialized.
+// NewProvider creates a Provider with all source clients initialized and the
+// default search fan-out.
 func NewProvider() *Provider {
 	return &Provider{
+		sources:         DefaultSourceConfig(),
 		Audnexus:        NewAudnexusClient(),
 		AudiMeta:        NewAudiMetaClient(),
 		ITunes:          NewITunesClient(),
@@ -51,27 +98,64 @@ func NewProvider() *Provider {
 	}
 }
 
-// Search queries all registered providers in parallel (up to searchWorkers
-// concurrent goroutines) and returns the merged results.
-// Errors from individual providers are logged but are not fatal.
-func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
-	type task struct {
-		name string
-		fn   searchProvider
-	}
+// SetSources replaces the search fan-out. Safe to call while searches run;
+// in-flight searches keep the set they started with.
+func (p *Provider) SetSources(cfg SourceConfig) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sources = cfg
+}
 
-	tasks := []task{
-		{"audnexus", p.Audnexus},
-		{"audimeta", p.AudiMeta},
-		{"itunes", p.ITunes},
-		{"audible", p.Audible},
-		{"storytel", p.Storytel},
-		{"bookbeat", p.BookBeat},
-		{"audioteka", p.Audioteka},
-		{"audiobookcovers", p.AudiobookCovers},
+// Sources returns the current search fan-out.
+func (p *Provider) Sources() SourceConfig {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.sources
+}
+
+type searchTask struct {
+	name string
+	fn   searchProvider
+}
+
+// searchTasks lists the enabled sources in fan-out order.
+func (p *Provider) searchTasks() []searchTask {
+	cfg := p.Sources()
+	all := []struct {
+		name    string
+		enabled bool
+		fn      searchProvider
+	}{
+		{"audnexus", cfg.Audnexus, p.Audnexus},
+		{"audimeta", cfg.AudiMeta, p.AudiMeta},
+		{"itunes", cfg.ITunes, p.ITunes},
+		{"audible", cfg.Audible, p.Audible},
+		{"storytel", cfg.Storytel, p.Storytel},
+		{"bookbeat", cfg.BookBeat, p.BookBeat},
+		{"audioteka", cfg.Audioteka, p.Audioteka},
+		{"audiobookcovers", cfg.AudiobookCovers, p.AudiobookCovers},
+	}
+	tasks := make([]searchTask, 0, len(all))
+	for _, t := range all {
+		if t.enabled {
+			tasks = append(tasks, searchTask{name: t.name, fn: t.fn})
+		}
+	}
+	return tasks
+}
+
+// Search queries the enabled sources in parallel (up to searchWorkers
+// concurrent goroutines) and returns the merged results. A source that
+// fails is logged; the search only reports an error when every source
+// failed and none returned a match.
+func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
+	tasks := p.searchTasks()
+	if len(tasks) == 0 {
+		return nil, nil
 	}
 
 	type result struct {
+		name    string
 		matches []metadata.Match
 		err     error
 	}
@@ -93,11 +177,14 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 
 			matches, err := sp.Search(tctx, q)
 			if err != nil {
+				// The full provider error stays HERE, in the plugin log. It is
+				// deliberately not forwarded verbatim to the host -- see
+				// ProvidersFailedError.Error() for why.
 				log.Printf("audiobook-metadata: provider %s search error: %v", name, err)
-				ch <- result{err: err}
+				ch <- result{name: name, err: err}
 				return
 			}
-			ch <- result{matches: matches}
+			ch <- result{name: name, matches: matches}
 		}(t.name, t.fn)
 	}
 
@@ -107,11 +194,139 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 	}()
 
 	var all []metadata.Match
+	var failures []ProviderFailure
 	for r := range ch {
 		all = append(all, r.matches...)
+		if r.err != nil {
+			failures = append(failures, ProviderFailure{
+				Provider: r.name,
+				Kind:     classifyFailure(r.err),
+				Err:      r.err,
+			})
+		}
+	}
+
+	// Report failure only when EVERY provider failed and none returned a match.
+	//
+	// The caller cannot tell "searched and found nothing" from "could not reach
+	// anything" unless we say so, and it acts very differently on each: Prairie
+	// stamps a clean empty result as outcome=no_match with next_attempt_at NULL,
+	// which is terminal -- the item is never looked at again. Swallowing the
+	// errors here meant a provider outage permanently wrote items off. On
+	// 2026-08-21 that marked 500 audiobooks as "no match" in 25 minutes, on
+	// course to write off all 242,330 in about nine days, without a single
+	// provider having answered.
+	//
+	// Partial success stays a success: if one provider answered, the others
+	// failing is normal and the matches we did get are worth returning.
+	if len(all) == 0 && len(failures) > 0 {
+		return nil, &ProvidersFailedError{Failures: failures}
 	}
 
 	return all, nil
+}
+
+// FailureKind is a small, stable vocabulary for why a provider could not
+// answer. It exists so the aggregate error can say what happened without
+// quoting the underlying provider text -- see ProvidersFailedError.Error().
+type FailureKind string
+
+const (
+	FailureBlocked     FailureKind = "blocked"      // 401/403 -- refuses us entirely
+	FailureRateLimited FailureKind = "rate-limited" // 429, or our own limiter starving
+	FailureTimeout     FailureKind = "timeout"
+	FailureUnavailable FailureKind = "unavailable" // network, 5xx, bad payload
+)
+
+// ProviderFailure records one provider's failure for a single query.
+type ProviderFailure struct {
+	Provider string
+	Kind     FailureKind
+	Err      error
+}
+
+// ProvidersFailedError reports that every provider failed and none matched.
+//
+// Its Error() text is a SUMMARY -- provider names and a failure kind, never the
+// underlying provider message. That is not cosmetic and not an attempt to hide
+// detail (the full error is logged in Search, next to the provider that raised
+// it). It exists because the host classifies our error by pattern-matching its
+// TEXT: prairie-server's classifyProviderErrorText treats a bare 401 or 403
+// anywhere in the message as a PERMANENT failure for the item, and parks it for
+// 30 days.
+//
+// We aggregate eight providers into one error, so that heuristic misfired
+// badly. audimeta answers HTTP 403 to every request, so its status code leaked
+// into the joined text and condemned the item -- 67 items were parked to
+// 2026-09-20 for the sole reason that one provider is blocked, which says
+// nothing whatsoever about the item. A provider being unreachable is an
+// availability problem and must stay retryable.
+type ProvidersFailedError struct {
+	Failures []ProviderFailure
+}
+
+func (e *ProvidersFailedError) Error() string {
+	parts := make([]string, 0, len(e.Failures))
+	for _, f := range e.Failures {
+		parts = append(parts, fmt.Sprintf("%s (%s)", f.Provider, f.Kind))
+	}
+	return fmt.Sprintf("all %d audiobook provider(s) failed: %s",
+		len(e.Failures), strings.Join(parts, ", "))
+}
+
+// Unwrap keeps the underlying errors reachable for callers in this process
+// (tests, logging). Only Error() crosses the RPC boundary.
+func (e *ProvidersFailedError) Unwrap() []error {
+	errs := make([]error, 0, len(e.Failures))
+	for _, f := range e.Failures {
+		errs = append(errs, f.Err)
+	}
+	return errs
+}
+
+// RateLimited reports whether any provider failed for a throttling reason, so
+// the caller can ask the host for a longer backoff than a plain retry.
+func (e *ProvidersFailedError) RateLimited() bool {
+	for _, f := range e.Failures {
+		if f.Kind == FailureRateLimited {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyFailure maps a provider error onto the vocabulary above. Text
+// matching is unavoidable here -- the providers are HTTP scrapers and clients
+// that report status inline -- but it happens ONCE, at the edge, instead of
+// leaving raw status codes to be re-interpreted downstream.
+func classifyFailure(err error) FailureKind {
+	if err == nil {
+		return FailureUnavailable
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, context.DeadlineExceeded),
+		strings.Contains(msg, "deadline exceeded"),
+		strings.Contains(msg, "timeout"),
+		// golang.org/x/time/rate refuses when the wait would outlast the
+		// deadline. That is our own limiter throttling us, not the provider.
+		strings.Contains(msg, "would exceed context deadline"):
+		if strings.Contains(msg, "rate:") || strings.Contains(msg, "would exceed context deadline") {
+			return FailureRateLimited
+		}
+		return FailureTimeout
+	case strings.Contains(msg, "429"),
+		strings.Contains(msg, "too many requests"),
+		strings.Contains(msg, "rate limit"):
+		return FailureRateLimited
+	case strings.Contains(msg, "401"),
+		strings.Contains(msg, "403"),
+		strings.Contains(msg, "forbidden"),
+		strings.Contains(msg, "unauthorized"):
+		return FailureBlocked
+	default:
+		return FailureUnavailable
+	}
 }
 
 // Fetch retrieves full metadata for a specific item by providerID and externalID.
@@ -121,6 +336,17 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	tctx, cancel := context.WithTimeout(ctx, providerTimeout)
 	defer cancel()
 
+	match, err := p.fetchPrimary(tctx, q)
+	if match != nil {
+		p.backfillCover(tctx, match, q)
+	}
+	return match, err
+}
+
+// fetchPrimary resolves the best metadata match by provider hint, then by ASIN
+// fallback. It returns the first source that responds regardless of whether
+// that match carries a cover.
+func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*metadata.Match, error) {
 	// Dispatch by explicit legacy hint or by the real provider-specific IDs
 	// stored in ProviderIDs.
 	providerHint := providerHintFromIDs(q.ProviderIDs)
@@ -181,6 +407,45 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	}
 
 	return nil, nil
+}
+
+// backfillCover fills a missing cover from cover-bearing sources. The primary
+// match may carry full text metadata but no cover image, and the host has no
+// GetImages fallback for this plugin, so the cover must travel on the match
+// itself. AudiobookCovers is a dedicated cover source; Audnexus and AudiMeta
+// also carry art. The first cover found for the ASIN is grafted on.
+//
+// The extra fetches run sequentially and only when the primary match has no
+// cover; parallelize if this becomes a latency hotspot.
+func (p *Provider) backfillCover(ctx context.Context, match *metadata.Match, q metadata.SearchQuery) {
+	if match == nil || strings.TrimSpace(match.CoverURL) != "" {
+		return
+	}
+	asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", "audimeta", "audible")
+	if asin == "" {
+		if id := firstProviderID(q.ProviderIDs, capabilityProviderID); isLikelyASIN(id) {
+			asin = id
+		}
+	}
+	if asin == "" {
+		return
+	}
+	type coverSource interface {
+		Fetch(context.Context, string) (*metadata.Match, error)
+	}
+	for _, src := range []coverSource{p.AudiobookCovers, p.Audnexus, p.AudiMeta} {
+		if src == nil {
+			continue
+		}
+		alt, err := src.Fetch(ctx, asin)
+		if err != nil || alt == nil {
+			continue
+		}
+		if cover := strings.TrimSpace(alt.CoverURL); cover != "" {
+			match.CoverURL = cover
+			return
+		}
+	}
 }
 
 func providerHintFromIDs(ids map[string]string) string {

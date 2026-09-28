@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -359,6 +360,7 @@ func TestProviderSearchAndFetch(t *testing.T) {
 	p.Audible.httpClient = &http.Client{Transport: rewrite}
 	p.Storytel.limiter = newLimiter(1000)
 	p.Storytel.httpClient = &http.Client{Transport: rewrite}
+	p.SetSources(allSources())
 
 	results, err := p.Search(context.Background(), metadata.SearchQuery{Title: "Midnight Library"})
 	if err != nil {
@@ -391,13 +393,22 @@ func TestProviderSearchAndFetch(t *testing.T) {
 	}
 }
 
+// allSources enables every source for title search; the scrapers are
+// opt-in by default.
+func allSources() SourceConfig {
+	return SourceConfig{
+		Audnexus: true, AudiMeta: true, ITunes: true, Audible: true,
+		Storytel: true, BookBeat: true, Audioteka: true, AudiobookCovers: true,
+	}
+}
+
 func jsonResponse(w http.ResponseWriter, v any) error {
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(v)
 }
 
 func TestAudibleTitleSearchUsesFixture(t *testing.T) {
-	searchHTML, err := os.ReadFile("testdata/audible_search.html")
+	searchHTML, err := os.ReadFile("testdata/audible_search_cards.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,8 +599,8 @@ func TestAPINotFoundDecodeAndInvalidInputPaths(t *testing.T) {
 	an404 := NewAudnexusClient()
 	an404.SetBaseURL(notFound.URL)
 	an404.limiter = newLimiter(1000)
-	if _, err := an404.Fetch(context.Background(), "B002V0QHBU"); err == nil {
-		t.Fatal("expected audnexus 404 decode error")
+	if m, err := an404.Fetch(context.Background(), "B002V0QHBU"); err != nil || m != nil {
+		t.Fatalf("audnexus 404 = %#v err=%v, want no match", m, err)
 	}
 	if results, err := an404.Search(context.Background(), metadata.SearchQuery{}); err != nil || results != nil {
 		t.Fatalf("audnexus empty search = %#v err=%v", results, err)
@@ -915,8 +926,9 @@ func TestScraperFetchErrorsAndProviderSearchErrors(t *testing.T) {
 		t.Fatalf("empty body %#v %v", m, err)
 	}
 
-	// Provider search logs per-provider errors but still succeeds.
+	// Provider search reports an error when every enabled source fails.
 	p := NewProvider()
+	p.SetSources(allSources())
 	p.Audnexus.SetBaseURL(url)
 	p.AudiMeta.SetBaseURL(url)
 	p.ITunes.SetBaseURL(url)
@@ -929,8 +941,9 @@ func TestScraperFetchErrorsAndProviderSearchErrors(t *testing.T) {
 	p.Storytel.SetHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, context.Canceled
 	})})
-	if _, err := p.Search(context.Background(), metadata.SearchQuery{Title: "x"}); err != nil {
-		t.Fatalf("provider search should swallow errors: %v", err)
+	var failed *ProvidersFailedError
+	if _, err := p.Search(context.Background(), metadata.SearchQuery{Title: "x"}); !errors.As(err, &failed) {
+		t.Fatalf("provider search with every source failing: err=%v, want *ProvidersFailedError", err)
 	}
 
 	if extractPublisherName(nil) != "" {
