@@ -410,7 +410,7 @@ func (s *StorytelScraper) fetch(ctx context.Context, fetchURL string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("storytel: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return "", nil

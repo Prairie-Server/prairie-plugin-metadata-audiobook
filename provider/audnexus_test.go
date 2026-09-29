@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
@@ -142,9 +143,14 @@ func TestAudnexusSearchUsesTheBooksSearchRoute(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	var gotPath, gotQuery string
+	var (
+		mu                sync.Mutex
+		gotPath, gotQuery string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotPath, gotQuery = r.URL.Path, r.URL.Query().Get("q")
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[" + string(fixture) + "]"))
 	}))
@@ -156,6 +162,8 @@ func TestAudnexusSearchUsesTheBooksSearchRoute(t *testing.T) {
 	if _, err := client.Search(context.Background(), metadata.SearchQuery{Title: "Hitchhiker"}); err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotPath != "/books/search" {
 		t.Errorf("requested path = %q, want %q -- /books is a 404 on the real API", gotPath, "/books/search")
 	}
@@ -171,9 +179,14 @@ func TestAudnexusSearchByASINUsesTheFetchRoute(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	var gotPath string
+	var (
+		mu      sync.Mutex
+		gotPath string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotPath = r.URL.Path
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(fixture)
 	}))
@@ -186,6 +199,8 @@ func TestAudnexusSearchByASINUsesTheFetchRoute(t *testing.T) {
 	if _, err := client.Search(context.Background(), q); err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotPath != "/books/B0182NWM9I" {
 		t.Errorf("requested path = %q, want /books/B0182NWM9I", gotPath)
 	}

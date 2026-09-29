@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,25 +37,25 @@ func (c *ITunesClient) SetBaseURL(url string) {
 
 // iTunesSearchResponse wraps the iTunes JSON envelope.
 type iTunesSearchResponse struct {
-	ResultCount int              `json:"resultCount"`
-	Results     []iTunesResult   `json:"results"`
+	ResultCount int            `json:"resultCount"`
+	Results     []iTunesResult `json:"results"`
 }
 
 // iTunesResult is a single audiobook entry from the iTunes search response.
 type iTunesResult struct {
-	CollectionID      int     `json:"collectionId"`
-	ArtistID          int     `json:"artistId"`
-	CollectionName    string  `json:"collectionName"`
-	TrackName         string  `json:"trackName"`
-	ArtistName        string  `json:"artistName"`
-	Description       string  `json:"description"`
-	ReleaseDate       string  `json:"releaseDate"`
-	PrimaryGenreName  string  `json:"primaryGenreName"`
-	ArtworkURL30      string  `json:"artworkUrl30"`
-	ArtworkURL60      string  `json:"artworkUrl60"`
-	ArtworkURL100     string  `json:"artworkUrl100"`
-	ArtworkURL600     string  `json:"artworkUrl600"`
-	TrackTimeMillis   int64   `json:"trackTimeMillis"`
+	CollectionID     int    `json:"collectionId"`
+	ArtistID         int    `json:"artistId"`
+	CollectionName   string `json:"collectionName"`
+	TrackName        string `json:"trackName"`
+	ArtistName       string `json:"artistName"`
+	Description      string `json:"description"`
+	ReleaseDate      string `json:"releaseDate"`
+	PrimaryGenreName string `json:"primaryGenreName"`
+	ArtworkURL30     string `json:"artworkUrl30"`
+	ArtworkURL60     string `json:"artworkUrl60"`
+	ArtworkURL100    string `json:"artworkUrl100"`
+	ArtworkURL600    string `json:"artworkUrl600"`
+	TrackTimeMillis  int64  `json:"trackTimeMillis"`
 }
 
 // NewITunesClient creates an iTunes client with a 20 rpm rate limiter.
@@ -202,10 +203,12 @@ func (c *ITunesClient) Fetch(ctx context.Context, id string) (*metadata.Match, e
 	}
 
 	// A lookup can echo back a non-collection wrapper (an artist, say) when the
-	// id resolves to something else. Take the first entry that actually carries
-	// a collectionId rather than trusting position.
+	// id resolves to something else, and an artist id expands into that
+	// artist's collections. Only the collection whose id IS the requested id
+	// identifies this book; anything else would attach another book's
+	// metadata to the item.
 	for _, r := range resp.Results {
-		if r.CollectionID == 0 {
+		if r.CollectionID == 0 || strconv.Itoa(r.CollectionID) != id {
 			continue
 		}
 		m := c.matchFromResult(r)
@@ -225,7 +228,7 @@ func (c *ITunesClient) get(ctx context.Context, reqURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("itunes: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("itunes: HTTP %d", resp.StatusCode)
