@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -81,5 +82,58 @@ func TestSearchWithNoSourcesDeclines(t *testing.T) {
 	results, err := p.Search(context.Background(), metadata.SearchQuery{Title: "Book"})
 	if err != nil || len(results) != 0 {
 		t.Fatalf("Search = (%d, %v), want (0, nil)", len(results), err)
+	}
+}
+
+// When nothing matches, a failed provider decides whether the empty result is
+// a real no-match (terminal on the host) or an error the host retries. A
+// provider that refuses every request (401/403) cannot change its answer, so
+// it alone must not keep an item retrying. Any failure that can clear up must.
+func TestSearchNoMatchFailureRule(t *testing.T) {
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/search":
+			w.Write([]byte(`{"resultCount":0,"results":[]}`))
+		default:
+			w.Write([]byte(`[]`))
+		}
+	}))
+	defer empty.Close()
+	status := func(code int) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	forbidden, unavailable := status(http.StatusForbidden), status(http.StatusServiceUnavailable)
+
+	cases := []struct {
+		name             string
+		audnexus, itunes string
+		wantErr          bool
+	}{
+		{"blocked source beside a clean no-match is a no-match", empty.URL, forbidden.URL, false},
+		{"unavailable source beside a clean no-match stays retryable", empty.URL, unavailable.URL, true},
+		{"every source blocked is still a failure", forbidden.URL, forbidden.URL, true},
+		{"no failures is a no-match", empty.URL, empty.URL, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewProvider()
+			p.Audnexus.baseURL = tc.audnexus
+			p.ITunes.baseURL = tc.itunes
+			p.SetSources(SourceConfig{Audnexus: true, ITunes: true})
+
+			results, err := p.Search(context.Background(), metadata.SearchQuery{Title: "Nothing Matches"})
+			if len(results) != 0 {
+				t.Fatalf("results = %d, want 0", len(results))
+			}
+			var failed *ProvidersFailedError
+			if got := errors.As(err, &failed); got != tc.wantErr {
+				t.Fatalf("Search err = %v, want ProvidersFailedError: %v", err, tc.wantErr)
+			}
+		})
 	}
 }

@@ -39,20 +39,20 @@ func (c *AudnexusClient) SetBaseURL(url string) {
 
 // audnexusBook is the JSON shape returned by GET /books/{asin}.
 type audnexusBook struct {
-	ASIN             string              `json:"asin"`
-	Title            string              `json:"title"`
-	Subtitle         string              `json:"subtitle"`
-	Authors          []audnexusPerson    `json:"authors"`
-	Narrators        []audnexusPerson    `json:"narrators"`
-	Publisher        string              `json:"publisher"`
-	ReleaseDate      string              `json:"releaseDate"`
-	RuntimeLengthMin int                 `json:"runtimeLengthMin"`
-	Description      string              `json:"description"`
-	Summary          string              `json:"summary"`
-	Image            string              `json:"image"`
-	Genres           []audnexusGenre     `json:"genres"`
-	Series           []audnexusSeries    `json:"series"`
-	Language         string              `json:"language"`
+	ASIN             string           `json:"asin"`
+	Title            string           `json:"title"`
+	Subtitle         string           `json:"subtitle"`
+	Authors          []audnexusPerson `json:"authors"`
+	Narrators        []audnexusPerson `json:"narrators"`
+	Publisher        string           `json:"publisher"`
+	ReleaseDate      string           `json:"releaseDate"`
+	RuntimeLengthMin int              `json:"runtimeLengthMin"`
+	Description      string           `json:"description"`
+	Summary          string           `json:"summary"`
+	Image            string           `json:"image"`
+	Genres           []audnexusGenre  `json:"genres"`
+	Series           []audnexusSeries `json:"series"`
+	Language         string           `json:"language"`
 }
 
 type audnexusPerson struct {
@@ -255,7 +255,7 @@ func (c *AudnexusClient) get(ctx context.Context, reqURL string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("audnexus: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil

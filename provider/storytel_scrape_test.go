@@ -68,16 +68,7 @@ func TestStorytelDomain(t *testing.T) {
 	}
 	for _, tt := range tests {
 		s := &StorytelScraper{region: tt.region}
-		got := "storytel." + s.domain()[len("storytel."):]
-		// domain() returns the fragment after "storytel."
-		got = "storytel." + func() string {
-			d, ok := storytelRegionDomain[tt.region]
-			if !ok {
-				return "com"
-			}
-			return d
-		}()
-		if got != tt.want {
+		if got := s.domain(); got != tt.want {
 			t.Errorf("domain(%q) = %q, want %q", tt.region, got, tt.want)
 		}
 	}

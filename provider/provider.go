@@ -146,8 +146,9 @@ func (p *Provider) searchTasks() []searchTask {
 
 // Search queries the enabled sources in parallel (up to searchWorkers
 // concurrent goroutines) and returns the merged results. A source that
-// fails is logged; the search only reports an error when every source
-// failed and none returned a match.
+// fails is logged. When no source returned a match, the search reports an
+// error if any source failed for a reason that may clear up (timeout, rate
+// limit, outage) or if every source failed; see the comment at the end.
 func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	tasks := p.searchTasks()
 	if len(tasks) == 0 {
@@ -206,7 +207,9 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 		}
 	}
 
-	// Report failure only when EVERY provider failed and none returned a match.
+	// Report failure when nothing matched and we cannot trust that as a real
+	// "no match": either every provider failed, or at least one failed for a
+	// reason that may clear up (timeout, rate limit, outage).
 	//
 	// The caller cannot tell "searched and found nothing" from "could not reach
 	// anything" unless we say so, and it acts very differently on each: Prairie
@@ -217,13 +220,30 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 	// course to write off all 242,330 in about nine days, without a single
 	// provider having answered.
 	//
+	// A BLOCKED provider (401/403) refuses every request, so retrying cannot
+	// change its answer. If it is the only kind of failure and another provider
+	// did answer, the empty result is a real no-match. Counting it as a failure
+	// would keep every unmatched item retrying for as long as the source stays
+	// blocked (audimeta answers 403 to everything).
+	//
 	// Partial success stays a success: if one provider answered, the others
 	// failing is normal and the matches we did get are worth returning.
-	if len(all) == 0 && len(failures) > 0 {
+	if len(all) == 0 && len(failures) > 0 && (len(failures) == len(tasks) || anyRetryable(failures)) {
 		return nil, &ProvidersFailedError{Failures: failures}
 	}
 
 	return all, nil
+}
+
+// anyRetryable reports whether any failure may succeed on a later attempt,
+// i.e. anything other than a provider that refuses us outright.
+func anyRetryable(failures []ProviderFailure) bool {
+	for _, f := range failures {
+		if f.Kind != FailureBlocked {
+			return true
+		}
+	}
+	return false
 }
 
 // FailureKind is a small, stable vocabulary for why a provider could not
@@ -245,7 +265,10 @@ type ProviderFailure struct {
 	Err      error
 }
 
-// ProvidersFailedError reports that every provider failed and none matched.
+// ProvidersFailedError reports that no provider matched and the empty result
+// cannot be trusted as a no-match, because every provider failed or at least
+// one failed for a retryable reason. Failures lists only the providers that
+// failed.
 //
 // Its Error() text is a SUMMARY -- provider names and a failure kind, never the
 // underlying provider message. That is not cosmetic and not an attempt to hide
@@ -270,7 +293,7 @@ func (e *ProvidersFailedError) Error() string {
 	for _, f := range e.Failures {
 		parts = append(parts, fmt.Sprintf("%s (%s)", f.Provider, f.Kind))
 	}
-	return fmt.Sprintf("all %d audiobook provider(s) failed: %s",
+	return fmt.Sprintf("%d audiobook provider(s) failed and none matched: %s",
 		len(e.Failures), strings.Join(parts, ", "))
 }
 

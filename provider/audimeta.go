@@ -297,7 +297,7 @@ func (c *AudiMetaClient) get(ctx context.Context, reqURL string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("audimeta: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil

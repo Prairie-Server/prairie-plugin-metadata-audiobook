@@ -466,7 +466,7 @@ func (s *AudibleScraper) fetchDoc(ctx context.Context, pageURL string) (*goquery
 	if err != nil {
 		return nil, fmt.Errorf("audible: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil

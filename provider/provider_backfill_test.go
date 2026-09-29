@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
@@ -13,9 +14,9 @@ import (
 // the item carries an ASIN; a match that already has a cover must be left
 // alone and must not cost an extra request.
 func TestBackfillCover(t *testing.T) {
-	var coverHits int
+	var coverHits atomic.Int32
 	covers := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		coverHits++
+		coverHits.Add(1)
 		if r.URL.Path != "/cover/by_book/B0182NWM9I" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
@@ -58,14 +59,14 @@ func TestBackfillCover(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			coverHits = 0
+			coverHits.Store(0)
 			m := tc.match
 			p.backfillCover(context.Background(), &m, metadata.SearchQuery{ProviderIDs: tc.ids})
 			if m.CoverURL != tc.wantCover {
 				t.Errorf("CoverURL = %q, want %q", m.CoverURL, tc.wantCover)
 			}
-			if coverHits != tc.wantHits {
-				t.Errorf("audiobookcovers requests = %d, want %d", coverHits, tc.wantHits)
+			if got := int(coverHits.Load()); got != tc.wantHits {
+				t.Errorf("audiobookcovers requests = %d, want %d", got, tc.wantHits)
 			}
 		})
 	}

@@ -12,8 +12,10 @@ switched on in the plugin settings; the four scrapers parse public catalog pages
 and are limited to six requests per minute each, so a title search that includes
 them takes several seconds longer. AudiMeta's hosted API shut down in March 2026.
 
-Every source still resolves an ID it already knows (an ASIN or Apple Books ID
-on the item), whether or not it is enabled for title searches.
+IDs already on the item still resolve through Fetch, whether or not the source
+is enabled for title searches. An ID tagged with its source (for example an
+Apple Books ID, or an ASIN from Audible) goes to that source. A bare ASIN with
+no source hint is tried against Audnexus first and then AudiMeta.
 
 ## Configuration
 

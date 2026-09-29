@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
+
 	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
 )
 

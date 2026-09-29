@@ -10,7 +10,7 @@ import (
 const maxTraverseDepth = 64
 
 func readLimitedBody(resp *http.Response, source string) (string, error) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return "", nil

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prairie-server/prairie-plugin-metadata-audiobook/metadata"
@@ -103,14 +104,14 @@ func TestITunesFetchUsesLookupEndpoint(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	called := false
+	var called atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called.Store(true)
 		if r.URL.Path != "/lookup" {
 			t.Errorf("path = %s, want /lookup", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("id"); got != "12345" {
-			t.Errorf("id = %q, want 12345", got)
+		if got := r.URL.Query().Get("id"); got != "1440742" {
+			t.Errorf("id = %q, want 1440742", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(fixture)
@@ -120,11 +121,11 @@ func TestITunesFetchUsesLookupEndpoint(t *testing.T) {
 	client := NewITunesClient()
 	client.baseURL = srv.URL
 
-	m, err := client.Fetch(context.Background(), "12345")
+	m, err := client.Fetch(context.Background(), "1440742")
 	if err != nil {
 		t.Fatalf("Fetch error: %v", err)
 	}
-	if !called {
+	if !called.Load() {
 		t.Fatal("Fetch made no HTTP request — the lookup endpoint was not used")
 	}
 	if m == nil {
@@ -155,5 +156,29 @@ func TestITunesFetchEmptyIDDeclines(t *testing.T) {
 	}
 	if m != nil {
 		t.Fatalf("expected nil match, got %+v", m)
+	}
+}
+
+// A lookup by an artist id expands into that artist's collections. None of
+// them is the requested book, so Fetch must not return one as a match.
+func TestITunesFetchIgnoresUnrelatedCollections(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"resultCount":3,"results":[` +
+			`{"wrapperType":"artist","artistId":777,"artistName":"A"},` +
+			`{"wrapperType":"audiobook","collectionId":111,"collectionName":"Other Book","artistName":"A"},` +
+			`{"wrapperType":"audiobook","collectionId":777222,"collectionName":"Another Book","artistName":"A"}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewITunesClient()
+	client.baseURL = srv.URL
+
+	m, err := client.Fetch(context.Background(), "777")
+	if err != nil {
+		t.Fatalf("Fetch error: %v", err)
+	}
+	if m != nil {
+		t.Fatalf("Fetch(777) = %q (id %s), want no match for an id that is not a collection", m.Title, m.ProviderID)
 	}
 }
