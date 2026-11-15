@@ -39,6 +39,13 @@ const (
 	searchWorkers = 3
 )
 
+// audnexusProbeTimeout bounds the Audnexus attempt made before a fetch falls
+// back to the Audible scraper. Audnexus normally answers in well under a
+// second; without a bound of its own, a stalled Audnexus would spend the
+// whole providerTimeout and leave the scraper nothing for its limiter wait
+// and request. A variable so tests can shorten it.
+var audnexusProbeTimeout = 5 * time.Second
+
 // searchProvider is the minimal interface each backend must satisfy.
 type searchProvider interface {
 	Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error)
@@ -150,24 +157,26 @@ func (p *Provider) searchTasks() []searchTask {
 // error if any source failed for a reason that may clear up (timeout, rate
 // limit, outage) or if every source failed; see the comment at the end.
 func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
-	tasks := p.searchTasks()
+	return searchAll(ctx, p.searchTasks(), q)
+}
+
+func searchAll(ctx context.Context, tasks []searchTask, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if len(tasks) == 0 {
 		return nil, nil
 	}
 
 	type result struct {
-		name    string
 		matches []metadata.Match
 		err     error
 	}
 
-	ch := make(chan result, len(tasks))
+	results := make([]result, len(tasks))
 	sem := make(chan struct{}, searchWorkers)
 
 	var wg sync.WaitGroup
-	for _, t := range tasks {
+	for i, t := range tasks {
 		wg.Add(1)
-		go func(name string, sp searchProvider) {
+		go func(i int, name string, sp searchProvider) {
 			defer wg.Done()
 
 			sem <- struct{}{}
@@ -182,25 +191,24 @@ func (p *Provider) Search(ctx context.Context, q metadata.SearchQuery) ([]metada
 				// deliberately not forwarded verbatim to the host -- see
 				// ProvidersFailedError.Error() for why.
 				log.Printf("audiobook-metadata: provider %s search error: %v", name, err)
-				ch <- result{name: name, err: err}
+				results[i] = result{err: err}
 				return
 			}
-			ch <- result{name: name, matches: matches}
-		}(t.name, t.fn)
+			results[i] = result{matches: matches}
+		}(i, t.name, t.fn)
 	}
+	wg.Wait()
 
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
+	// Results keep the fan-out order, not the order the sources answered in.
+	// The host fetches candidates in the order it receives them, so a book
+	// that both Audnexus and a scraper list is fetched through Audnexus.
 	var all []metadata.Match
 	var failures []ProviderFailure
-	for r := range ch {
+	for i, r := range results {
 		all = append(all, r.matches...)
 		if r.err != nil {
 			failures = append(failures, ProviderFailure{
-				Provider: r.name,
+				Provider: tasks[i].name,
 				Kind:     classifyFailure(r.err),
 				Err:      r.err,
 			})
@@ -253,7 +261,13 @@ type FailureKind string
 
 const (
 	FailureBlocked     FailureKind = "blocked"      // 401/403 -- refuses us entirely
-	FailureRateLimited FailureKind = "rate-limited" // 429, or our own limiter starving
+	FailureRateLimited FailureKind = "rate-limited" // 429: the source asked us to slow down
+	// FailureBusy is our own limiter: the request could not get a slot inside
+	// the deadline. The source never saw it and never throttled us, so this
+	// must not reach the host as throttling. The host answers throttling by
+	// pausing the whole plugin, which would stop the fast sources because one
+	// slow scraper has a queue.
+	FailureBusy        FailureKind = "busy"
 	FailureTimeout     FailureKind = "timeout"
 	FailureUnavailable FailureKind = "unavailable" // network, 5xx, bad payload
 )
@@ -307,8 +321,8 @@ func (e *ProvidersFailedError) Unwrap() []error {
 	return errs
 }
 
-// RateLimited reports whether any provider failed for a throttling reason, so
-// the caller can ask the host for a longer backoff than a plain retry.
+// RateLimited reports whether any provider was throttled by its source, so the
+// caller can ask the host to back off instead of retrying soon.
 func (e *ProvidersFailedError) RateLimited() bool {
 	for _, f := range e.Failures {
 		if f.Kind == FailureRateLimited {
@@ -328,15 +342,14 @@ func classifyFailure(err error) FailureKind {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	// golang.org/x/time/rate refuses when the wait would outlast the
+	// deadline. That is our own limiter queueing us, not the provider.
+	case strings.Contains(msg, "rate: wait"),
+		strings.Contains(msg, "would exceed context deadline"):
+		return FailureBusy
 	case errors.Is(err, context.DeadlineExceeded),
 		strings.Contains(msg, "deadline exceeded"),
-		strings.Contains(msg, "timeout"),
-		// golang.org/x/time/rate refuses when the wait would outlast the
-		// deadline. That is our own limiter throttling us, not the provider.
-		strings.Contains(msg, "would exceed context deadline"):
-		if strings.Contains(msg, "rate:") || strings.Contains(msg, "would exceed context deadline") {
-			return FailureRateLimited
-		}
+		strings.Contains(msg, "timeout"):
 		return FailureTimeout
 	case strings.Contains(msg, "429"),
 		strings.Contains(msg, "too many requests"),
@@ -360,11 +373,31 @@ func (p *Provider) Fetch(ctx context.Context, q metadata.SearchQuery) (*metadata
 	defer cancel()
 
 	match, err := p.fetchPrimary(tctx, q)
+	if err != nil {
+		// As in Search, the source's own error text stays in the plugin log.
+		log.Printf("audiobook-metadata: fetch error: %v", err)
+		return nil, &FetchFailedError{Kind: classifyFailure(err), Err: err}
+	}
 	if match != nil {
 		p.backfillCover(tctx, match, q)
 	}
-	return match, err
+	return match, nil
 }
+
+// FetchFailedError reports that the source asked for one record could not
+// answer. Like ProvidersFailedError, its text names a failure kind and never
+// quotes the source, so a status code in a source's message cannot be read by
+// the host as a verdict on the item.
+type FetchFailedError struct {
+	Kind FailureKind
+	Err  error
+}
+
+func (e *FetchFailedError) Error() string {
+	return fmt.Sprintf("audiobook source could not answer (%s)", e.Kind)
+}
+
+func (e *FetchFailedError) Unwrap() error { return e.Err }
 
 // fetchPrimary resolves the best metadata match by provider hint, then by ASIN
 // fallback. It returns the first source that responds regardless of whether
@@ -392,7 +425,7 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 	case "audible":
 		asin := firstProviderID(q.ProviderIDs, "asin", "audible", capabilityProviderID)
 		if asin != "" {
-			return p.Audible.Fetch(tctx, asin)
+			return p.fetchAudibleASIN(tctx, asin)
 		}
 	case "storytel":
 		if id := firstProviderID(q.ProviderIDs, "storytel", capabilityProviderID); id != "" {
@@ -413,9 +446,13 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 		}
 	}
 
-	// Fallback: if an ASIN is present, try Audnexus then AudiMeta. Only
-	// treat the capability-level ID as an ASIN when it has ASIN shape, since
-	// non-ASIN providers such as iTunes also use that field as a fallback ID.
+	// Fallback: if an ASIN is present, ask Audnexus. This is also the path a
+	// host takes when it looks a book up by the ASIN in its tags alone
+	// (lookup_provider_ids in the manifest), so an ASIN Audnexus does not
+	// know must come back as "no record", not as another source's error.
+	// AudiMeta is asked next only when it is switched on. Only treat the
+	// capability-level ID as an ASIN when it has ASIN shape, since non-ASIN
+	// providers such as iTunes also use that field as a fallback ID.
 	asin := firstProviderID(q.ProviderIDs, "asin", "audnexus", "audimeta", "audible")
 	if asin == "" {
 		if id := firstProviderID(q.ProviderIDs, capabilityProviderID); isLikelyASIN(id) {
@@ -426,17 +463,45 @@ func (p *Provider) fetchPrimary(tctx context.Context, q metadata.SearchQuery) (*
 		if m, err := p.Audnexus.Fetch(tctx, asin); m != nil || err != nil {
 			return m, err
 		}
-		return p.AudiMeta.Fetch(tctx, asin)
+		if p.Sources().AudiMeta {
+			return p.AudiMeta.Fetch(tctx, asin)
+		}
 	}
 
 	return nil, nil
+}
+
+// fetchAudibleASIN resolves an Audible ID. An Audible ID is an ASIN, and
+// Audnexus serves the same catalog record through an API that answers in
+// well under a second, while the scraper is limited to one product page every
+// ten seconds. The scraper is asked only when Audnexus has no record for the
+// ASIN or cannot answer in audnexusProbeTimeout.
+//
+// "No record" needs both sources to say so. When Audnexus failed and the
+// scraper finds nothing, the Audnexus failure is returned, so the host
+// retries instead of filing the book as unknown.
+func (p *Provider) fetchAudibleASIN(ctx context.Context, asin string) (*metadata.Match, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, audnexusProbeTimeout)
+	m, audnexusErr := p.Audnexus.Fetch(probeCtx, asin)
+	cancel()
+	if m != nil {
+		return m, nil
+	}
+	if audnexusErr != nil {
+		log.Printf("audiobook-metadata: audnexus fetch for an audible id failed, asking audible: %v", audnexusErr)
+	}
+	if m, err := p.Audible.Fetch(ctx, asin); m != nil || err != nil {
+		return m, err
+	}
+	return nil, audnexusErr
 }
 
 // backfillCover fills a missing cover from cover-bearing sources. The primary
 // match may carry full text metadata but no cover image, and the host has no
 // GetImages fallback for this plugin, so the cover must travel on the match
 // itself. AudiobookCovers is a dedicated cover source; Audnexus and AudiMeta
-// also carry art. The first cover found for the ASIN is grafted on.
+// also carry art, and AudiMeta is asked only when it is switched on. The first
+// cover found for the ASIN is grafted on.
 //
 // The extra fetches run sequentially and only when the primary match has no
 // cover; parallelize if this becomes a latency hotspot.
@@ -456,7 +521,11 @@ func (p *Provider) backfillCover(ctx context.Context, match *metadata.Match, q m
 	type coverSource interface {
 		Fetch(context.Context, string) (*metadata.Match, error)
 	}
-	for _, src := range []coverSource{p.AudiobookCovers, p.Audnexus, p.AudiMeta} {
+	sources := []coverSource{p.AudiobookCovers, p.Audnexus}
+	if p.Sources().AudiMeta {
+		sources = append(sources, p.AudiMeta)
+	}
+	for _, src := range sources {
 		if src == nil {
 			continue
 		}
