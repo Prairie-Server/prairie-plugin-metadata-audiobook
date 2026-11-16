@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
 	pluginv1 "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginproto/prairie/plugin/v1"
 	publicmanifest "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginsdk/manifest"
+
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
 )
 
 // The manifest's "sources" schema, its form, and the plugin's defaults must
