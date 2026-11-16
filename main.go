@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -46,11 +47,28 @@ func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestReques
 	return &pluginv1.GetManifestResponse{Manifest: s.manifest}, nil
 }
 
-// Configure applies the "sources" global config. A missing or partial entry
-// leaves the defaults in place for the keys it does not name.
+// Configure applies the "sources" and "limits" global config. A missing or
+// partial entry leaves the defaults in place for the keys it does not name.
 func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
 	s.provider.SetSources(sourceConfigFromEntries(req.GetConfig()))
+	s.provider.Audnexus.SetRequestsPerMinute(audnexusPerMinuteFromEntries(req.GetConfig()))
 	return &pluginv1.ConfigureResponse{}, nil
+}
+
+// audnexusPerMinuteFromEntries reads audnexus_per_minute from the "limits"
+// config entry, or the default when it is absent or not a whole number of at
+// least one. The client keeps it inside the range it supports.
+func audnexusPerMinuteFromEntries(entries []*pluginv1.ConfigEntry) int {
+	perMinute := provider.DefaultAudnexusPerMinute
+	for _, entry := range entries {
+		if entry == nil || entry.GetKey() != "limits" || entry.GetValue() == nil {
+			continue
+		}
+		if v, ok := entry.GetValue().AsMap()["audnexus_per_minute"].(float64); ok && v >= 1 && v == math.Trunc(v) {
+			perMinute = int(min(v, provider.MaxAudnexusPerMinute))
+		}
+	}
+	return perMinute
 }
 
 // sourceConfigFromEntries reads the "sources" config entry over the defaults.
@@ -96,6 +114,9 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 		Language:    req.GetLanguage(),
 	})
 	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
 		return nil, searchFailureStatus(err)
 	}
 
@@ -125,8 +146,14 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 		ContentType: req.GetItemType(),
 		Language:    req.GetLanguage(),
 	})
-	if err != nil || result == nil {
-		return nil, err
+	if err != nil {
+		if done := callerDone(ctx); done != nil {
+			return nil, done
+		}
+		return nil, fetchFailureStatus(err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 
 	item, err := metadataItemFromMatch(*result, req.GetItemType())
@@ -211,8 +238,9 @@ func providerIDsFromProto(value *structpb.Struct, capabilityID string, fallbackI
 // failure here is an availability problem: the item was never judged, so it
 // must stay retryable.
 //
-//	Unavailable       -> transient    (minutes)
-//	ResourceExhausted -> rate-limited (hours, which is what throttling wants)
+//	Unavailable       -> transient: the item is retried, other items go on
+//	ResourceExhausted -> rate-limited: the host stops calling this plugin for
+//	                     a while, so it is kept for a source that throttled us
 func searchFailureStatus(err error) error {
 	var failed *provider.ProvidersFailedError
 	if !errors.As(err, &failed) {
@@ -220,6 +248,32 @@ func searchFailureStatus(err error) error {
 	}
 	code := codes.Unavailable
 	if failed.RateLimited() {
+		code = codes.ResourceExhausted
+	}
+	return status.Error(code, failed.Error())
+}
+
+// callerDone reports a request the host cancelled or let expire as Canceled
+// or DeadlineExceeded. Every source fails once the request's context is done,
+// and that must not read as the sources being down. A source running into the
+// plugin's own per-source timeout is different: the request is still live,
+// and that stays a source failure.
+func callerDone(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+	return nil
+}
+
+// fetchFailureStatus does the same for a record fetch. Without a code the
+// failure reaches the host as codes.Unknown and is classified by its text.
+func fetchFailureStatus(err error) error {
+	var failed *provider.FetchFailedError
+	if !errors.As(err, &failed) {
+		return err
+	}
+	code := codes.Unavailable
+	if failed.Kind == provider.FailureRateLimited {
 		code = codes.ResourceExhausted
 	}
 	return status.Error(code, failed.Error())

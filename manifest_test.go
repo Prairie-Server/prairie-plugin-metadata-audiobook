@@ -6,6 +6,8 @@ import (
 
 	pluginv1 "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginproto/prairie/plugin/v1"
 	publicmanifest "github.com/prairie-server/prairie-plugin-sdk/pkg/pluginsdk/manifest"
+
+	"github.com/prairie-server/prairie-plugin-metadata-audiobook/provider"
 )
 
 // The manifest's "sources" schema, its form, and the plugin's defaults must
@@ -56,4 +58,60 @@ func TestManifestSourcesSchemaMatchesDefaults(t *testing.T) {
 			t.Errorf("manifest default for %q = %v, code default = %v", key, got, wantDefault)
 		}
 	}
+}
+
+// The manifest's "limits" form must show the rate an unconfigured plugin uses
+// and accept no more than the client does.
+func TestManifestLimitsSchemaMatchesDefaults(t *testing.T) {
+	manifest, err := publicmanifest.Load(manifestJSON)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	for _, schema := range manifest.GetGlobalConfigSchema() {
+		if schema.GetKey() != "limits" {
+			continue
+		}
+		var jsonSchema struct {
+			Properties map[string]struct {
+				Minimum int `json:"minimum"`
+				Maximum int `json:"maximum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(schema.GetJsonSchema()), &jsonSchema); err != nil {
+			t.Fatalf("parse json_schema: %v", err)
+		}
+		if got := jsonSchema.Properties["audnexus_per_minute"]; got.Minimum != provider.MinAudnexusPerMinute || got.Maximum != provider.MaxAudnexusPerMinute {
+			t.Errorf("schema range = %d to %d, client range = %d to %d", got.Minimum, got.Maximum, provider.MinAudnexusPerMinute, provider.MaxAudnexusPerMinute)
+		}
+		fields := schema.GetAdminForm().GetFields()
+		if len(fields) != 1 || fields[0].GetKey() != "audnexus_per_minute" {
+			t.Fatalf("limits form fields = %v, want audnexus_per_minute alone", fields)
+		}
+		if got := int(fields[0].GetDefaultValue().GetNumberValue()); got != audnexusPerMinuteFromEntries(nil) {
+			t.Errorf("manifest default = %d, code default = %d", got, audnexusPerMinuteFromEntries(nil))
+		}
+		return
+	}
+	t.Fatal("manifest has no \"limits\" global config schema")
+}
+
+// The host asks GetMetadata for a book by the ASIN in its tags only when the
+// capability declares that key; without it every tagged book goes through a
+// search first.
+func TestManifestDeclaresASINLookup(t *testing.T) {
+	manifest, err := publicmanifest.Load(manifestJSON)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	for _, capability := range manifest.GetCapabilities() {
+		if capability.GetId() != capabilityID {
+			continue
+		}
+		keys := capability.GetMetadata().GetFields()["lookup_provider_ids"].GetListValue().GetValues()
+		if len(keys) != 1 || keys[0].GetStringValue() != "asin" {
+			t.Fatalf("lookup_provider_ids = %v, want [asin]", keys)
+		}
+		return
+	}
+	t.Fatalf("manifest has no %q capability", capabilityID)
 }

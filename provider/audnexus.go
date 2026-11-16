@@ -3,8 +3,11 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -25,7 +28,8 @@ import (
 //
 // Audnexus has no general book-title search — only ASIN-based lookups.
 // Search() returns results only when q.ProviderIDs["asin"] is set.
-// Rate limit: 100 requests/minute.
+// Rate limit: DefaultAudnexusPerMinute requests a minute until the host sets
+// another one (SetRequestsPerMinute).
 type AudnexusClient struct {
 	httpClient *http.Client
 	baseURL    string
@@ -69,20 +73,25 @@ type audnexusSeries struct {
 	Position string `json:"position"`
 }
 
-var htmlTagRE = regexp.MustCompile(`<[^>]+>`)
+var (
+	htmlTagRE = regexp.MustCompile(`<[^>]+>`)
+	// Block-level tags separate sentences; dropping them outright glued
+	// "originality.</p><p>Read by" into "originality.Read by".
+	htmlBlockTagRE = regexp.MustCompile(`(?i)<\s*/?\s*(p|br|div|li|ul|ol|h[1-6])\b[^>]*>`)
+	spaceRunRE     = regexp.MustCompile(`[ \t]{2,}`)
+	// A block tag beside a line break leaves a stray space on either side of it.
+	newlineSpaceRE = regexp.MustCompile(`[ \t]*(\r?\n)[ \t]*`)
+)
 
 func stripHTML(s string) string {
+	s = htmlBlockTagRE.ReplaceAllString(s, " ")
 	s = htmlTagRE.ReplaceAllString(s, "")
-	// Normalise common HTML entities.
-	replacer := strings.NewReplacer(
-		"&amp;", "&",
-		"&lt;", "<",
-		"&gt;", ">",
-		"&quot;", `"`,
-		"&#39;", "'",
-		"&nbsp;", " ",
-	)
-	return strings.TrimSpace(replacer.Replace(s))
+	// Decode every entity, numeric ones (&#xa0;, &#8220;) included.
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = spaceRunRE.ReplaceAllString(s, " ")
+	s = newlineSpaceRE.ReplaceAllString(s, "$1")
+	return strings.TrimSpace(s)
 }
 
 func extractYear(dateStr string) int {
@@ -154,24 +163,60 @@ func bookFromAudnexus(b audnexusBook) metadata.Match {
 	}
 }
 
-// NewAudnexusClient creates an Audnexus client with a 100 rpm rate limiter.
+const (
+	// DefaultAudnexusPerMinute is the Audnexus request rate until an admin
+	// sets one. It leaves most of the public API's allowance unused, so a
+	// server does not lean on a free community service by default.
+	DefaultAudnexusPerMinute = 100
+	// MaxAudnexusPerMinute is the highest rate an admin can set: the public
+	// api.audnex.us advertises 300 requests a minute for each address
+	// (x-ratelimit-limit) and answers 429 beyond it.
+	MaxAudnexusPerMinute = 300
+	// MinAudnexusPerMinute is the lowest. A request waits on the limiter
+	// inside providerTimeout, and the limiter refuses at once a wait that
+	// would outlast it. At 20 a minute a request is three seconds behind the
+	// one before it, so a few lookups arriving together still fit; a rate of
+	// one or two a minute would fail them instead of slowing them down.
+	MinAudnexusPerMinute = 20
+)
+
+// NewAudnexusClient creates an Audnexus client limited to
+// DefaultAudnexusPerMinute requests a minute.
 func NewAudnexusClient() *AudnexusClient {
 	return &AudnexusClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    "https://api.audnex.us",
-		limiter:    newLimiter(100),
+		limiter:    newLimiter(DefaultAudnexusPerMinute),
 	}
 }
 
-// Search resolves by ASIN when q.ProviderIDs["asin"] is set, and otherwise by
-// title against the /books/search endpoint.
+// SetRequestsPerMinute changes the request rate, kept between
+// MinAudnexusPerMinute and MaxAudnexusPerMinute. Safe to call while requests
+// wait on the limiter: a request already waiting keeps the slot it was given,
+// and requests after it are spaced at the new rate.
+func (c *AudnexusClient) SetRequestsPerMinute(perMinute int) {
+	perMinute = min(max(perMinute, MinAudnexusPerMinute), MaxAudnexusPerMinute)
+	c.limiter.SetLimit(rate.Limit(float64(perMinute) / 60.0))
+}
+
+// RequestsPerMinute returns the current request rate.
+func (c *AudnexusClient) RequestsPerMinute() int {
+	return int(math.Round(float64(c.limiter.Limit()) * 60.0))
+}
+
+// Search resolves by ASIN when q.ProviderIDs["asin"] is set and Audnexus has
+// a book for it, and otherwise by title against the /books/search endpoint.
 func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]metadata.Match, error) {
 	if asin := q.ProviderIDs["asin"]; asin != "" {
 		m, err := c.Fetch(ctx, asin)
-		if err != nil || m == nil {
+		if err != nil {
 			return nil, err
 		}
-		return []metadata.Match{*m}, nil
+		if m != nil {
+			return []metadata.Match{*m}, nil
+		}
+		// No book under that ASIN: the tag may be wrong, so the title still
+		// gets its search.
 	}
 
 	// Fall back to title search if a title is provided.
@@ -220,14 +265,30 @@ func (c *AudnexusClient) Search(ctx context.Context, q metadata.SearchQuery) ([]
 	return results, nil
 }
 
-// Fetch returns full metadata for the given ASIN.
+// errAudnexusBadRequest is an HTTP 400 answer. For a book fetch it means
+// Audnexus has no book under that ID.
+var errAudnexusBadRequest = errors.New("audnexus: HTTP 400")
+
+// Fetch returns full metadata for the given ASIN, or nothing when Audnexus
+// has no book for it. That covers more than an unknown ASIN: a value that is
+// not an ASIN at all (a tag holding another service's ID) is not sent, and
+// Audnexus answers 400 for an ASIN it knows as something other than a book,
+// such as a podcast. Both describe the item, not the service. Reported as
+// failures, they would count against the provider on the host, which pauses
+// it after a few in a row.
 func (c *AudnexusClient) Fetch(ctx context.Context, asin string) (*metadata.Match, error) {
+	if !isLikelyASIN(asin) {
+		return nil, nil
+	}
 	if err := waitForLimiter(ctx, c.limiter); err != nil {
 		return nil, err
 	}
 
-	reqURL := c.baseURL + "/books/" + url.PathEscape(strings.ToUpper(asin)) + "?region=us"
+	reqURL := c.baseURL + "/books/" + url.PathEscape(normalizeASIN(asin)) + "?region=us"
 	body, err := c.get(ctx, reqURL)
+	if errors.Is(err, errAudnexusBadRequest) {
+		return nil, nil
+	}
 	if err != nil || body == nil {
 		// get() reports an unknown/delisted ASIN as (nil, nil); decoding that
 		// nil body would surface as a bogus JSON error instead of "no match".
@@ -259,6 +320,9 @@ func (c *AudnexusClient) get(ctx context.Context, reqURL string) ([]byte, error)
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, errAudnexusBadRequest
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("audnexus: HTTP %d", resp.StatusCode)
