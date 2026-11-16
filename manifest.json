@@ -1,6 +1,6 @@
 {
   "plugin_id": "prairie.audiobook-metadata",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "checksum": "__CHECKSUM__",
   "prairie_api_version": "v1",
   "presentation": {
@@ -111,6 +111,25 @@
             "description": "The hosted API shut down in March 2026 and answers 403. Kept for self-hosted deployments.",
             "control": "ADMIN_FORM_CONTROL_SWITCH",
             "default_value": false
+          }
+        ]
+      }
+    },
+    {
+      "key": "limits",
+      "title": "Request limits",
+      "description": "How often the plugin may call a source. A higher limit matches a large library sooner. Keep it under what the source allows.",
+      "json_schema": "{\"type\":\"object\",\"properties\":{\"audnexus_per_minute\":{\"type\":\"integer\",\"minimum\":20,\"maximum\":300}},\"additionalProperties\":false}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save request limits",
+        "fields": [
+          {
+            "key": "audnexus_per_minute",
+            "label": "Audnexus requests per minute",
+            "description": "Default 100, from 20 to 300. The public Audnexus API allows 300 a minute for each address, shared by everything that calls it from this server's address.",
+            "control": "ADMIN_FORM_CONTROL_NUMBER",
+            "default_value": 100
           }
         ]
       }
